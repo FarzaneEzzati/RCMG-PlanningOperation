@@ -59,7 +59,7 @@ Scens, Probs, Load, PV_Unit = geneCases()
 # Ranges need to be used
 T = 168
 DVCCount = 3
-MCount = 1
+MCount = 12
 HCount = 10
 OutageStart = 3 * 24 + 15
 RNGDvc = range(1, DVCCount + 1)
