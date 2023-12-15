@@ -23,7 +23,7 @@ def geneCases():
     lp2 = pd.read_csv('Data/Load_profile_2.csv')
     # PV output for one unit (4kW)
     pv_profile = pd.read_csv('Data/PV_profiles.csv')
-    return scens, probs, [lp1, lp2], pv_profile
+    return scens, probs, [lp1, lp2, lp1, lp2, lp2, lp1, lp2, lp1, lp1, lp2], pv_profile
 
 
 # Global parameters
@@ -42,7 +42,7 @@ GridPlus = 0.1497
 GridMinus = alpha * GridPlus
 LoadPrice = GridPlus
 GenerPrice = beta * GridPlus
-VoLL = np.array([2.1, 1.8, 1.4]) * GridPlus
+VoLL = np.array([2.1, 1.8, 1.4, 1.2, 1.6, 2.3, 2.7, 1.1, 1.5, 2.0]) * GridPlus
 PVSellPrice = (alpha + beta) * GridPlus
 DGSellPrice = PVSellPrice
 PVCurPrice = (alpha + beta) * GridPlus
@@ -59,9 +59,9 @@ Scens, Probs, Load, PV_Unit = geneCases()
 # Ranges need to be used
 T = 168
 DVCCount = 3
-MCount = 12
+MCount = 4
 HCount = 10
-OutageStart = 3 * 24 + 15
+OutageStart = 2
 RNGDvc = range(1, DVCCount + 1)
 RNGTime = range(1, T + 1)
 RNGTimeMinus = range(1, T)
