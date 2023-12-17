@@ -1,4 +1,3 @@
-# Dec 14, 2023. Repository was created to keep track of codings for DOE project.
 
 import copy
 import pickle
@@ -350,15 +349,4 @@ class RealScale:
     def Solve(self):
         self.model.optimize()
         return [self.X[1].x, self.X[2].x, self.X[3].x]
-
-
-if __name__ == '__main__':
-    from BuildModels import SingleScenario, RealScale
-    model = RealScale()
-    print(model.Solve())
-
-
-
-
-
 
