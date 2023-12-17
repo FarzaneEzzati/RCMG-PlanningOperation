@@ -10,7 +10,7 @@ import gurobipy
 from gurobipy import quicksum, GRB
 import time
 env = gurobipy.Env()
-env.setParam('OutputFlag', 0)
+env.setParam('OutputFlag', 1)
 
 
 def geneCases(consumer):
@@ -25,7 +25,7 @@ def geneCases(consumer):
 
     # PV output for one unit (4kW)
     pv_profile = pd.read_csv('Data/PV_profiles.csv')
-    return scens, probs, [random.choice(lp1, lp2) for _ in range(consumer)], pv_profile
+    return scens, probs, [random.choice([lp1, lp2]) for _ in range(consumer)], pv_profile
 
 
 # Global parameters
@@ -60,7 +60,7 @@ T = 168
 DVCCount = 3
 MCount = 12
 HCount = 20
-OutageStart = 3 * 24 + 16
+OutageStart = 16
 # Import data
 Scens, Probs, Load, PV_Unit = geneCases(consumer=HCount)
 # Ranges

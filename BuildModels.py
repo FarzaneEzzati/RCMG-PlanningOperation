@@ -24,7 +24,7 @@ def geneCases(consumer):
 
     # PV output for one unit (4kW)
     pv_profile = pd.read_csv('Data/PV_profiles.csv')
-    return scens, probs, [random.choice(lp1, lp2) for _ in range(consumer)], pv_profile
+    return scens, probs, [random.choice([lp1, lp2]) for _ in range(consumer)], pv_profile
 
 
 # Global parameters
