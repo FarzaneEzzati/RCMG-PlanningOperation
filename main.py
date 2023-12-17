@@ -11,10 +11,5 @@ import pandas as pd
 if __name__ == '__main__':
     from BuildModels import SingleScenario, RealScale
     model = RealScale()
+    
     print(model.Solve())
-
-
-
-
-
-

@@ -27,8 +27,8 @@ def geneCases(consumer):
 T = 168
 DVCCount = 3
 MCount = 12
-HCount = 20
-OutageStart = 3 * 24 + 16
+HCount = 37
+OutageStart = 16
 
 # Import data
 Scens, Probs, Load, PV_Unit = geneCases(consumer=HCount)
@@ -74,10 +74,10 @@ Eta_i = 0.9
 
 
 # Define the load profiles and PV profiles
-L = {(h, t, g, s): Load[h - 1][f'Month {g}'].iloc[t - 1]
-     for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen}
-PV = {(t, g, s): PV_Unit[f'Month {g}'].iloc[t - 1]
-      for t in RNGTime for g in RNGMonth for s in RNGScen}
+L = {(h, t, g, s, i): Load[h - 1][f'Month {g}'].iloc[t - 1]
+     for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta}
+PV = {(t, g, s, i): PV_Unit[f'Month {g}'].iloc[t - 1]
+      for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta}
 
 
 class SingleScenario:
@@ -359,7 +359,7 @@ class RealScale:
                          for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta))
 
         # DRP cost
-        Costs.append(quicksum(Probs[s] * quicksum(Y_LT[(h, t, g, s, i)] * TransPrice
+        Costs.append(quicksum(Probs[s] * quicksum(Y_LT[(h, t, g, s, i)] * TransPrice[h-1]
                                              for h in RNGHouse for t in RNGTime for g in RNGMonth for i in RNGSta)
                          for s in RNGScen))
 
@@ -371,5 +371,6 @@ class RealScale:
         self.X2 = X2
 
     def Solve(self):
+        print('Started Optimizing')
         self.model.optimize()
         return [[self.X1[1].x, self.X1[2].x, self.X1[3].x], [self.X2[1].x, self.X2[2].x, self.X2[3].x]]
