@@ -39,7 +39,7 @@ RNGTime = range(1, T + 1)
 RNGTimeMinus = range(1, T)
 RNGMonth = range(1, MCount + 1)
 RNGHouse = range(1, HCount + 1)
-RNGScen = range(1, len(Scens) + 1)
+RNGScen = range(1, len(Scens)+1)
 RNGSta = (1, 2)
 
 # Global parameters
@@ -71,11 +71,13 @@ DG_gamma = 0.4
 Eta_c = 0.8
 Eta_i = 0.9
 
+
+
 # Define the load profiles and PV profiles
-L = {(h, t, g, s): Load[h - 1][f'Month {g}'].iloc[t - 1]
-     for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen}
-PV = {(t, g, s): PV_Unit[f'Month {g}'].iloc[t - 1]
-      for t in RNGTime for g in RNGMonth for s in RNGScen}
+L = {(h, t, g, s, i): Load[h - 1][f'Month {g}'].iloc[t - 1]
+     for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta}
+PV = {(t, g, s, i): PV_Unit[f'Month {g}'].iloc[t - 1]
+      for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta}
 
 
 class SingleScenario:
@@ -175,27 +177,27 @@ class SingleScenario:
 
         # Defining grid import/export amount for cost evaluation
         GridImport = quicksum(Y_GridL[(t, g)] + Y_GridES[(t, g)]
-                              for t in RNGTime for g in RNGMonth)
+                            for t in RNGTime for g in RNGMonth)
         GridExport = quicksum(Y_PVGrid[(t, g)] + Y_ESGrid[(t, g)] + Y_DGGrid[(t, g)]
-                              for t in RNGTime for g in RNGMonth)
+                             for t in RNGTime for g in RNGMonth)
 
         # Investment cost
         Cost1 = pr * quicksum(X[d] * CO[d] for d in RNGDvc)
         # Curtailment cost
         Cost2 = pr * quicksum(PVCurPrice * (Y_PVCur[(t, g)] + Y_DGCur[(t, g)]) for t in RNGTime for g in RNGMonth)
         # Losing load cost
-        Cost3 = pr * quicksum(VoLL[h - 1] * Y_LL[(h, t, g)] for h in RNGHouse for t in RNGTime for g in RNGMonth)
+        Cost3 = pr * quicksum(VoLL[h - 1] * Y_LL[(h, t, g)]for h in RNGHouse for t in RNGTime for g in RNGMonth)
         # DG cost
         Cost4 = pr * FuelPrice * DG_gamma * quicksum(Y_DGL[(t, g)] + Y_DGGrid[(t, g)] + Y_DGCur[(t, g)] + Y_DGES[(t, g)]
-                                                     for t in RNGTime for g in RNGMonth)
+                                                for t in RNGTime for g in RNGMonth)
         # Import/Export cost
         Cost5 = pr * quicksum(GridPlus * GridImport -
-                              GridMinus * GridExport -
-                              GenerPrice * X[2] * PV[(t, g)] -
-                              quicksum(LoadPrice * Y_LH[(h, t, g)]
-                                       for h in RNGHouse)
-                              for t in RNGTime for g in RNGMonth)
-        Cost6 = quicksum(lmda[d - 1] * X[d] for d in RNGDvc)  # Note that lamda multiplier has dimension 1XDV, here 1X3
+                         GridMinus * GridExport -
+                         GenerPrice * X[2] * PV[(t, g)] -
+                         quicksum(LoadPrice * Y_LH[(h, t, g)]
+                                  for h in RNGHouse)
+                         for t in RNGTime for g in RNGMonth)
+        Cost6 = quicksum(lmda[d-1] * X[d] for d in RNGDvc)  # Note that lamda multiplier has dimension 1XDV, here 1X3
 
         self.primal_cost = Cost1 + (365 / 7) * (Cost2 + Cost3 + Cost4 + Cost5)
         self.dual_cost = Cost6
@@ -205,7 +207,7 @@ class SingleScenario:
         self.X = X
 
     def UpdateObj(self, l1):
-        self.dual_cost = quicksum(l1[d - 1] * self.X[d] for d in RNGDvc)
+        self.dual_cost = quicksum(l1[d-1] * self.X[d] for d in RNGDvc)
         self.model.setObjective(self.primal_cost + self.dual_cost, sense=GRB.MINIMIZE)
         self.model.update()
 
@@ -217,11 +219,12 @@ class SingleScenario:
 class RealScale:
 
     def __init__(self):
-        Out_Time = {(g, s): 0 for s in RNGScen for g in RNGMonth}
-        for s in RNGScen:
-            if Scens[s] != 0:
-                for g in RNGMonth:
-                    Out_Time[(g, s)] = [OutageStart + j for j in range(int(Scens[s]))]
+        Out_Time = {(g, s, i): 0 for s in RNGScen for g in RNGMonth for i in RNGSta}
+        for i in RNGSta:
+            for s in RNGScen:
+                if Scens[s] != 0:
+                    for g in RNGMonth:
+                        Out_Time[(g, s, i)] = [OutageStart + j for j in range(int(Scens[s]))]
 
         model = gurobipy.Model('MIP', env=env)
 
@@ -236,125 +239,129 @@ class RealScale:
         '''Reinvestment variables'''
         X2 = model.addVars(RNGDvc, vtype=GRB.INTEGER, name='X2')
         # Bounds on X decisions
-        model.addConstrs(X2[d] <= UB[d - 1] / 2 for d in RNGDvc)
-        model.addConstrs(X2[d] >= LB[d - 1] / 2 for d in RNGDvc)
+        model.addConstrs(X2[d] <= UB[d - 1]/2 for d in RNGDvc)
+        model.addConstrs(X2[d] >= LB[d - 1]/2 for d in RNGDvc)
         # First stage constraint
-        model.addConstr(quicksum([X2[d] * C[d] for d in RNGDvc]) <= Budget / 2, name='Budget')
+        model.addConstr(quicksum([X2[d] * C[d] for d in RNGDvc]) <= Budget/2, name='Budget')
 
         '''Scheduling variables'''
-        Y_tgs = [(t, g, s)
-                 for t in RNGTime for g in RNGMonth for s in RNGScen]
-        Y_htgs = [(h, t, g, s)
-                  for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen]
+        Y_tgs = [(t, g, s, i)
+                 for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta]
+        Y_htgs = [(h, t, g, s, i)
+                  for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta]
 
         self.Y_tgs = Y_tgs
         self.Y_htgs = Y_htgs
 
-        Y_PVES = [model.addVars(Y_tgs, name='Y_PVES'), model.addVars(Y_tgs, name='Y_PVES')]
-        Y_DGES = [model.addVars(Y_tgs, name='Y_DGES'), model.addVars(Y_tgs, name='Y_DGES')]
-        Y_GridES = [model.addVars(Y_tgs, name='Y_GridES'), model.addVars(Y_tgs, name='Y_GridES')]
-        Y_PVL = [model.addVars(Y_tgs, name='Y_PVL'), model.addVars(Y_tgs, name='Y_PVL')]
-        Y_DGL = [model.addVars(Y_tgs, name='Y_DGL'), model.addVars(Y_tgs, name='Y_PVL')]
-        Y_ESL = [model.addVars(Y_tgs, name='Y_ESL'), model.addVars(Y_tgs, name='Y_ESL')]
-        Y_GridL = [model.addVars(Y_tgs, name='Y_GridL'), model.addVars(Y_tgs, name='Y_GridL')]
-        Y_LH = [model.addVars(Y_htgs, name='Y_LH'), model.addVars(Y_htgs, name='Y_LH')]  # Load served
-        Y_LL = [model.addVars(Y_htgs, name='Y_LL'), model.addVars(Y_htgs, name='Y_LL')]  # Load lost
-        Y_LT = [model.addVars(Y_htgs, name='Y_LT'), model.addVars(Y_htgs, name='Y_LT')]  # Load transferred
-        Y_PVCur = [model.addVars(Y_tgs, name='Y_PVCur'), model.addVars(Y_tgs, name='Y_PVCur')]
-        Y_DGCur = [model.addVars(Y_tgs, name='Y_DGCur'), model.addVars(Y_tgs, name='Y_DGCur')]
-        Y_PVGrid = [model.addVars(Y_tgs, name='Y_DGGrid'), model.addVars(Y_tgs, name='Y_DGGrid')]
-        Y_DGGrid = [model.addVars(Y_tgs, name='Y_DGGrid'), model.addVars(Y_tgs, name='Y_DGGrid')]
-        Y_ESGrid = [model.addVars(Y_tgs, name='Y_ESGrid'), model.addVars(Y_tgs, name='Y_ESGrid')]
-        E = [model.addVars(Y_tgs, name='E'), model.addVars(Y_tgs, name='E')]
-        U_E = [model.addVars(Y_tgs, vtype=GRB.BINARY, name='U_ES'), model.addVars(Y_tgs, vtype=GRB.BINARY, name='U_ES')]
+        Y_PVES = model.addVars(Y_tgs, name='Y_PVES')
+        Y_DGES = model.addVars(Y_tgs, name='Y_DGES')
+        Y_GridES = model.addVars(Y_tgs, name='Y_GridES')
+
+        Y_PVL = model.addVars(Y_tgs, name='Y_PVL')
+        Y_DGL = model.addVars(Y_tgs, name='Y_DGL')
+        Y_ESL = model.addVars(Y_tgs, name='Y_ESL')
+        Y_GridL = model.addVars(Y_tgs, name='Y_GridL')
+
+        Y_LH = model.addVars(Y_htgs, name='Y_LH')  # Load served
+        Y_LL = model.addVars(Y_htgs, name='Y_LL')  # Load lost
+        Y_LT = model.addVars(Y_htgs, name='Y_LT')  # Load transferred
+
+        Y_PVCur = model.addVars(Y_tgs, name='Y_PVCur')
+        Y_DGCur = model.addVars(Y_tgs, name='Y_DGCur')
+
+        Y_PVGrid = model.addVars(Y_tgs, name='Y_DGGrid')
+        Y_DGGrid = model.addVars(Y_tgs, name='Y_DGGrid')
+        Y_ESGrid = model.addVars(Y_tgs, name='Y_ESGrid')
+
+        E = model.addVars(Y_tgs, name='E')
+
+        U_ES = model.addVars(Y_tgs, vtype=GRB.BINARY, name='U_ES')
 
         '''Constraints'''
-        for ii in (0, 1):
         # ES levels
-        model.addConstrs(E[ii][(1, g, s)] == SOC_UB * X1[1] for g in RNGMonth for s in RNGScen)
-        model.addConstrs(SOC_LB * X1[1] <= E[ii][(t, g, s, 1)] for t in RNGTime for g in RNGMonth for s in RNGScen)
-        model.addConstrs(E[ii][(t, g, s)] <= SOC_UB * X1[1] for t in RNGTime for g in RNGMonth for s in RNGScen)
+        model.addConstrs(E[(1, g, s, 1)] == SOC_UB * X1[1] for g in RNGMonth for s in RNGScen)
+        model.addConstrs(SOC_LB * X1[1] <= E[(t, g, s, 1)] for t in RNGTime for g in RNGMonth for s in RNGScen)
+        model.addConstrs(E[(t, g, s, 1)] <= SOC_UB * X1[1] for t in RNGTime for g in RNGMonth for s in RNGScen)
 
-        model.addConstrs(E[ii][(1, g, s)] == SOC_UB * (X1[1] + X2[1]) for g in RNGMonth for s in RNGScen)
-        model.addConstrs(
-            SOC_LB * (X1[1] + X2[1]) <= E[ii][(t, g, s, 2)] for t in RNGTime for g in RNGMonth for s in RNGScen)
-        model.addConstrs(
-            E[ii][(t, g, s, 2)] <= SOC_UB * (X1[1] + X2[1]) for t in RNGTime for g in RNGMonth for s in RNGScen)
+        model.addConstrs(E[(1, g, s, 2)] == SOC_UB * (X1[1] + X2[1]) for g in RNGMonth for s in RNGScen)
+        model.addConstrs(SOC_LB * (X1[1] + X2[1]) <= E[(t, g, s, 2)] for t in RNGTime for g in RNGMonth for s in RNGScen)
+        model.addConstrs(E[(t, g, s, 2)] <= SOC_UB * (X1[1] + X2[1]) for t in RNGTime for g in RNGMonth for s in RNGScen)
 
         # Balance of power flow
-        model.addConstrs(E[ii][(t + 1, g, s)] == E[ii][(t, g, s)] +
-                         ES_gamma * (Y_PVES[ii][(t, g, s)] + Y_DGES[ii][(t, g, s)] + Eta_c * Y_GridES[ii][(t, g, s)]) -
-                         Eta_i * (Y_ESL[ii][(t, g, s)] + Y_ESGrid[ii][(t, g, s)]) / ES_gamma
-                         for t in RNGTimeMinus for g in RNGMonth for s in RNGScen)
+        model.addConstrs(E[(t + 1, g, s, i)] == E[(t, g, s, i)] +
+                         ES_gamma * (Y_PVES[(t, g, s, i)] + Y_DGES[(t, g, s, i)] + Eta_c * Y_GridES[(t, g, s, i)]) -
+                         Eta_i * (Y_ESL[(t, g, s, i)] + Y_ESGrid[(t, g, s, i)]) / ES_gamma
+                         for t in RNGTimeMinus for g in RNGMonth for s in RNGScen for i in RNGSta)
 
         # Assigned load decomposition
-        model.addConstrs(quicksum(L[(h, t, g, s)] for h in RNGHouse) >=
-                         Eta_i * (Y_ESL[ii][(t, g, s)] + Y_DGL[ii][(t, g, s)] + Y_PVL[ii][(t, g, s)]) +
-                         Y_GridL[ii][(t, g, s)]
-                         for t in RNGTime for g in RNGMonth for s in RNGScen)
+        model.addConstrs(quicksum(L[(h, t, g, s, i)] for h in RNGHouse) >=
+                         Eta_i * (Y_ESL[(t, g, s, i)] + Y_DGL[(t, g, s, i)] + Y_PVL[(t, g, s, i)]) +
+                         Y_GridL[(t, g, s, i)]
+                         for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta)
 
         # Load decomposition
-        model.addConstrs(Y_LH[ii][(h, t, g, s)] + Y_LL[ii][(h, t, g, s)] + Y_LT[ii][(h, t, g, s)] == L[(h, t, g, s)]
-                         for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen)
+        model.addConstrs(Y_LH[(h, t, g, s, i)] + Y_LL[(h, t, g, s, i)] + Y_LT[(h, t, g, s, i)] == L[(h, t, g, s, i)]
+                         for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta)
 
         # PV power decomposition
-        model.addConstrs(Y_PVL[ii][(t, g, s)] + Y_PVES[ii][(t, g, s)] + Y_PVCur[ii][(t, g, s)] + Y_PVGrid[ii][(t, g, s)] ==
-                         PV[(t, g, s)] * X1[2]
-                         for t in RNGTime for g in RNGMonth for s in RNGScen)
+        model.addConstrs(Y_PVL[(t, g, s, i)] + Y_PVES[(t, g, s, i)] + Y_PVCur[(t, g, s, i)] + Y_PVGrid[(t, g, s, i)] ==
+                         PV[(t, g, s, i)] * (X1[2] + (i-1)*X2[2])
+                         for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta)
 
         # DG power decomposition
-        model.addConstrs(Y_DGL[ii][(t, g, s)] + Y_DGES[ii][(t, g, s)] + Y_DGGrid[ii][(t, g, s)] + Y_DGCur[ii][(t, g, s)] ==
-                         X1[3]
-                         for t in RNGTime for g in RNGMonth for s in RNGScen)
+        model.addConstrs(Y_DGL[(t, g, s, i)] + Y_DGES[(t, g, s, i)] + Y_DGGrid[(t, g, s, i)] + Y_DGCur[(t, g, s, i)] ==
+                         (X1[3] + (i-1)*X2[3])
+                         for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta)
 
         # ES charging/discharging constraints
-        model.addConstrs(Y_ESL[ii][(t, g, s)] + Y_ESGrid[ii][(t, g, s)] <= UB[0] * U_E[ii][(t, g, s)]
-                         for t in RNGTime for g in RNGMonth for s in RNGScen)
-        model.addConstrs(
-            Y_PVES[ii][(t, g, s)] + Y_GridES[ii][(t, g, s)] + Y_DGES[ii][(t, g, s)] <= UB[0] * (1 - U_E[ii][(t, g, s)])
-            for t in RNGTime for g in RNGMonth for s in RNGScen)
+        model.addConstrs(Y_ESL[(t, g, s, i)] + Y_ESGrid[(t, g, s, i)] <= UB[0] * U_ES[(t, g, s, i)]
+                         for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta)
+        model.addConstrs(Y_PVES[(t, g, s, i)] + Y_GridES[(t, g, s, i)] + Y_DGES[(t, g, s, i)] <= UB[0] * (1 - U_ES[(t, g, s, i)])
+                         for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta)
+
 
         # Prohibited transaction with the grid during outage
-        for s in RNGScen:
-            for g in RNGMonth:
-                if Out_Time[(g, s)] != 0:
-                    model.addConstrs(Y_GridL[ii][(t, g, s)] + Y_GridES[ii][(t, g, s)] == 0
-                                     for t in Out_Time[(g, s)] for s in RNGScen)
-                    model.addConstrs(Y_PVGrid[ii][(t, g, s)] + Y_ESGrid[ii][(t, g, s)] + Y_DGGrid[ii][(t, g, s)] == 0
-                                     for t in Out_Time[(g, s)] for s in RNGScen)
+        for i in RNGSta:
+            for s in RNGScen:
+                for g in RNGMonth:
+                    if Out_Time[(g, s, i)] != 0:
+                        model.addConstrs(Y_GridL[(t, g, s, i)] + Y_GridES[(t, g, s, i)] == 0
+                                         for t in Out_Time[(g, s, i)] for s in RNGScen)
+                        model.addConstrs(Y_PVGrid[(t, g, s, i)] + Y_ESGrid[(t, g, s, i)] + Y_DGGrid[(t, g, s, i)] == 0
+                                         for t in Out_Time[(g, s, i)] for s in RNGScen)
 
         # Defining grid import/export amount for cost evaluation
-        GridImport = quicksum(Y_GridL[ii][(t, g, s)] + Y_GridES[ii][(t, g, s)]
-                              for t in RNGTime for g in RNGMonth for s in RNGScen)
-        GridExport = quicksum(Y_PVGrid[ii][(t, g, s)] + Y_ESGrid[ii][(t, g, s)] + Y_DGGrid[ii][(t, g, s)]
-                              for t in RNGTime for g in RNGMonth for s in RNGScen)
+        GridImport = quicksum(Y_GridL[(t, g, s, i)] + Y_GridES[(t, g, s, i)]
+                            for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta)
+        GridExport = quicksum(Y_PVGrid[(t, g, s, i)] + Y_ESGrid[(t, g, s, i)] + Y_DGGrid[(t, g, s, i)]
+                             for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta)
 
         '''Costs'''
         Costs = []
         # Investment cost
         Capital = quicksum((X1[d] + X2[d]) * CO[d] for d in RNGDvc)
         # Curtailment cost
-        Costs.append(quicksum(Probs[s] * PVCurPrice * (Y_PVCur[ii][(t, g, s)] + Y_DGCur[ii][(t, g, s)])
-                              for t in RNGTime for g in RNGMonth for s in RNGScen))
+        Costs.append(quicksum(Probs[s] * PVCurPrice * (Y_PVCur[(t, g, s, i)] + Y_DGCur[(t, g, s, i)])
+                         for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta))
         # Losing load cost
-        Costs.append(quicksum(Probs[s] * VoLL[h - 1] * Y_LL[ii][(h, t, g, s)]
-                              for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen))
+        Costs.append(quicksum(Probs[s] * VoLL[h - 1] * Y_LL[(h, t, g, s, i)]
+                         for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta))
         # DG cost
-        Costs.append(FuelPrice * DG_gamma * quicksum(Probs[s] * (Y_DGL[ii][(t, g, s)] + Y_DGGrid[ii][(t, g, s)] +
-                                                                 Y_DGCur[ii][(t, g, s)] + Y_DGES[ii][(t, g, s)])
-                                                     for t in RNGTime for g in RNGMonth for s in RNGScen))
+        Costs.append(FuelPrice * DG_gamma * quicksum(Probs[s] * (Y_DGL[(t, g, s, i)] + Y_DGGrid[(t, g, s, i)] +
+                                                     Y_DGCur[(t, g, s, i)] + Y_DGES[(t, g, s, i)])
+                                                     for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta))
         # Import/Export cost
         Costs.append(quicksum(Probs[s] * (GridPlus * GridImport -
-                                          GridMinus * GridExport -
-                                          GenerPrice * X1[2] * PV[ii][(t, g, s)] -
-                                          quicksum(LoadPrice * Y_LH[ii][(h, t, g, s)]
-                                                   for h in RNGHouse))
-                              for t in RNGTime for g in RNGMonth for s in RNGScen))
+                                     GridMinus * GridExport -
+                                     GenerPrice * X1[2] * PV[(t, g, s, i)] -
+                                     quicksum(LoadPrice * Y_LH[(h, t, g, s, i)]
+                                              for h in RNGHouse))
+                         for t in RNGTime for g in RNGMonth for s in RNGScen for i in RNGSta))
 
         # DRP cost
-        Costs.append(quicksum(Probs[s] * quicksum(Y_LT[ii][(h, t, g, s)] * TransPrice[h - 1]
-                                                  for h in RNGHouse for t in RNGTime for g in RNGMonth)
-                              for s in RNGScen))
+        Costs.append(quicksum(Probs[s] * quicksum(Y_LT[(h, t, g, s, i)] * TransPrice[h-1]
+                                             for h in RNGHouse for t in RNGTime for g in RNGMonth for i in RNGSta)
+                         for s in RNGScen))
 
         primal_cost = Capital + (365 / 7) * quicksum(Costs)
         model.setObjective(primal_cost, sense=GRB.MINIMIZE)
