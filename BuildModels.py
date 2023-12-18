@@ -27,8 +27,8 @@ def geneCases(consumer):
 # Counts
 T = 168
 DVCCount = 3
-MCount = 12
-HCount = 37
+MCount = 2
+HCount = 4
 OutageStart = 16
 
 # Import data
@@ -44,22 +44,25 @@ RNGScen = range(1, len(Scens) + 1)
 RNGSta = (0, 1)
 
 # Global parameters
-Budget = 100000
+Budget1 = 100000
+Budget2 = Budget1 / 2
 Years = 20
 Interest_Rate = 0.08
 Operational_Rate = 0.01
 PA_Factor = ((1 + Interest_Rate) ** Years - 1) / (Interest_Rate * (1 + Interest_Rate) ** Years)
-C = {1: 600, 2: 2780 / 4, 3: 150}
+C = {1: 15, 2: 71, 3: 150}
 CO = {i: C[i] * PA_Factor + C[i] * Operational_Rate for i in (1, 2, 3)}
-UB = [166, 80, 40]
-LB = [20, 10, 2]
-FuelPrice = 3.7
+UB1 = [166, 80, 0]
+LB1 = [20, 20, 0]
+UB2 = [j/2 for j in UB1]
+LB2 = [0 for j in LB1]
+FuelPrice = 1.05  # $/litr
 alpha, beta = 0.5, 0.2
 GridPlus = 0.1497
 GridMinus = alpha * GridPlus
-LoadPrice = GridPlus
+LoadPrice = GridPlus * 0.85
 GenerPrice = beta * GridPlus
-VoLL = np.multiply([random.choice([1.8, 2.3, 1.2, 1.6, 2.5, 3, 2.2]) for _ in RNGHouse], GridPlus)
+VoLL = np.multiply([random.choice([1.8, 2.3, 1.2, 1.6, 2.5, 3, 2.2]) for _ in RNGHouse], 100 * GridPlus)
 TransMax = 0.3
 TransPrice = [v * TransMax for v in VoLL]
 PVSellPrice = (alpha + beta) * GridPlus
@@ -68,10 +71,10 @@ PVCurPrice = (alpha + beta) * GridPlus
 DGCurPrice = (alpha + beta) * GridPlus
 SOC_UB, SOC_LB = 0.9, 0.1
 ES_gamma = 0.85
-DG_gamma = 0.4
+DG_gamma = 0.3 # litr/kW
 Eta_c = 0.8
 Eta_i = 0.9
-GenPar = 365 / 7
+GenPar = (365 / 7) / 12
 
 # Define the load profiles and PV profiles
 L1 = {(h, t, g, s): Load[h - 1][f'Month {g}'].iloc[t - 1]
@@ -233,18 +236,18 @@ class RealScale:
         '''Investment variables'''
         X1 = model.addVars(RNGDvc, vtype=GRB.INTEGER, name='X1')
         # Bounds on X decisions
-        model.addConstrs(X1[d] <= UB[d - 1] for d in RNGDvc)
-        model.addConstrs(X1[d] >= LB[d - 1] for d in RNGDvc)
+        model.addConstrs(X1[d] <= UB1[d - 1] for d in RNGDvc)
+        model.addConstrs(X1[d] >= LB1[d - 1] for d in RNGDvc)
         # First stage constraint
-        model.addConstr(quicksum([X1[d] * C[d] for d in RNGDvc]) <= Budget, name='Budget')
+        model.addConstr(quicksum([X1[d] * C[d] for d in RNGDvc]) <= Budget1, name='Budget')
 
         '''Reinvestment variables'''
         X2 = model.addVars(RNGDvc, vtype=GRB.INTEGER, name='X2')
         # Bounds on X decisions
-        model.addConstrs(X2[d] <= UB[d - 1] / 2 for d in RNGDvc)
-        model.addConstrs(X2[d] >= LB[d - 1] / 2 for d in RNGDvc)
+        model.addConstrs(X2[d] <= UB2[d - 1] for d in RNGDvc)
+        model.addConstrs(X2[d] >= LB2[d - 1] for d in RNGDvc)
         # First stage constraint
-        model.addConstr(quicksum([X2[d] * C[d] for d in RNGDvc]) <= Budget / 2, name='Budget')
+        model.addConstr(quicksum([X2[d] * C[d] for d in RNGDvc]) <= Budget2, name='Budget')
 
         '''Scheduling variables'''
         Y_tgs = [(t, g, s)
@@ -279,16 +282,12 @@ class RealScale:
 
         '''Constraints'''
         for ii in RNGSta:
-            # ES levels
-            model.addConstrs(E[ii][(1, g, s)] == SOC_UB * X1[1] for g in RNGMonth for s in RNGScen)
-            model.addConstrs(SOC_LB * X1[1] <= E[ii][(t, g, s)] for t in RNGTime for g in RNGMonth for s in RNGScen)
-            model.addConstrs(E[ii][(t, g, s)] <= SOC_UB * X1[1] for t in RNGTime for g in RNGMonth for s in RNGScen)
 
-            model.addConstrs(E[ii][(1, g, s)] == SOC_UB * (X1[1] + X2[1]) for g in RNGMonth for s in RNGScen)
-            model.addConstrs(
-                SOC_LB * (X1[1] + X2[1]) <= E[ii][(t, g, s)] for t in RNGTime for g in RNGMonth for s in RNGScen)
-            model.addConstrs(
-                E[ii][(t, g, s)] <= SOC_UB * (X1[1] + X2[1]) for t in RNGTime for g in RNGMonth for s in RNGScen)
+            # ES levels
+            model.addConstrs(E[ii][(1, g, s)] == SOC_UB * (X1[1] + ii * X2[1]) for g in RNGMonth for s in RNGScen)
+            model.addConstrs(SOC_LB * (X1[1] + ii * X2[1]) <= E[ii][(t, g, s)] for t in RNGTime for g in RNGMonth for s in RNGScen)
+            model.addConstrs(E[ii][(t, g, s)] <= SOC_UB * (X1[1] + ii * X2[1]) for t in RNGTime for g in RNGMonth for s in RNGScen)
+
 
             # Balance of power flow
             model.addConstrs(E[ii][(t + 1, g, s)] == E[ii][(t, g, s)] +
@@ -297,7 +296,7 @@ class RealScale:
                              for t in RNGTimeMinus for g in RNGMonth for s in RNGScen)
 
             # Assigned load decomposition
-            model.addConstrs(quicksum(L[ii][(h, t, g, s)] for h in RNGHouse) >=
+            model.addConstrs(quicksum(Y_LH[ii][(h, t, g, s)] for h in RNGHouse) ==
                              Eta_i * (Y_ESL[ii][(t, g, s)] + Y_DGL[ii][(t, g, s)] + Y_PVL[ii][(t, g, s)]) +
                              Y_GridL[ii][(t, g, s)]
                              for t in RNGTime for g in RNGMonth for s in RNGScen)
@@ -306,21 +305,24 @@ class RealScale:
             model.addConstrs(Y_LH[ii][(h, t, g, s)] + Y_LL[ii][(h, t, g, s)] + Y_LT[ii][(h, t, g, s)] == L[ii][(h, t, g, s)]
                              for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen)
 
+            model.addConstrs(Y_LT[ii][(h, t, g, s)] == 0
+                             for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen)
+
             # PV power decomposition
             model.addConstrs(Y_PVL[ii][(t, g, s)] + Y_PVES[ii][(t, g, s)] + Y_PVCur[ii][(t, g, s)] + Y_PVGrid[ii][(t, g, s)] ==
-                             PV[(t, g, s)] * X1[2]
+                             PV[(t, g, s)] * (X1[2] + ii * X2[2])
                              for t in RNGTime for g in RNGMonth for s in RNGScen)
 
             # DG power decomposition
             model.addConstrs(Y_DGL[ii][(t, g, s)] + Y_DGES[ii][(t, g, s)] + Y_DGGrid[ii][(t, g, s)] + Y_DGCur[ii][(t, g, s)] ==
-                             X1[3]
+                             (X1[3] + ii * X2[3])
                              for t in RNGTime for g in RNGMonth for s in RNGScen)
 
             # ES charging/discharging constraints
-            model.addConstrs(Y_ESL[ii][(t, g, s)] + Y_ESGrid[ii][(t, g, s)] <= UB[0] * U_E[ii][(t, g, s)]
+            model.addConstrs(Y_ESL[ii][(t, g, s)] + Y_ESGrid[ii][(t, g, s)] <= (UB1[0] + ii * UB2[0])* U_E[ii][(t, g, s)]
                              for t in RNGTime for g in RNGMonth for s in RNGScen)
             model.addConstrs(
-                Y_PVES[ii][(t, g, s)] + Y_GridES[ii][(t, g, s)] + Y_DGES[ii][(t, g, s)] <= UB[0] * (1 - U_E[ii][(t, g, s)])
+                Y_PVES[ii][(t, g, s)] + Y_GridES[ii][(t, g, s)] + Y_DGES[ii][(t, g, s)] <= (UB1[0] + ii * UB2[0]) * (1 - U_E[ii][(t, g, s)])
                 for t in RNGTime for g in RNGMonth for s in RNGScen)
 
             # Prohibited transaction with the grid during outage
@@ -353,7 +355,7 @@ class RealScale:
                                                          for t in RNGTime for g in RNGMonth for s in RNGScen))
             # Import/Export cost
 
-            Costs.append(quicksum(Probs[s] * (GridPlus * (Y_GridL[ii][(t, g, s)] + Y_GridES[ii][(t, g, s)]) -
+            Costs.append(quicksum(Probs[s] * (Y_GridES[ii][(t, g, s)] -
                                               GridMinus * (Y_PVGrid[ii][(t, g, s)] + Y_ESGrid[ii][(t, g, s)] + Y_DGGrid[ii][(t, g, s)]) -
                                               GenerPrice * X1[2] * PV[(t, g, s)] -
                                               LoadPrice * quicksum(Y_LH[ii][(h, t, g, s)]
@@ -369,14 +371,21 @@ class RealScale:
         tt = time.time()
         print(f'Build costs: {te}')
 
-        primal_cost = Capital + GenPar * quicksum(Costs)
-        model.setObjective(primal_cost, sense=GRB.MINIMIZE)
+        total_cost = Capital + GenPar * quicksum(Costs)
+        model.setObjective(total_cost, sense=GRB.MINIMIZE)
         model.update()
         self.model = model
         self.X1 = X1
         self.X2 = X2
+        self.Y_LL1 = Y_LL[0]
+
 
     def Solve(self):
+        print(self.model)
         print('Started Optimizing')
         self.model.optimize()
+
+        lost1 =[self.Y_LL1[(h, t, g, s)].x for t in RNGTime for g in RNGMonth for s in RNGScen for h in RNGHouse]
+        print(f'Total lost {np.sum(lost1)}')
+        print(f'Load: {np.sum([L[0][(h, t, g, s)] for t in RNGTime for g in RNGMonth for s in RNGScen for h in RNGHouse])}')
         return [[self.X1[1].x, self.X1[2].x, self.X1[3].x], [self.X2[1].x, self.X2[2].x, self.X2[3].x]]
