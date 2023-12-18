@@ -74,8 +74,9 @@ Eta_i = 0.9
 GenPar = 365 / 7
 
 # Define the load profiles and PV profiles
-L = {(h, t, g, s): Load[h - 1][f'Month {g}'].iloc[t - 1]
+L1 = {(h, t, g, s): Load[h - 1][f'Month {g}'].iloc[t - 1]
      for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen}
+L = [L1 for _ in RNGSta]
 PV = {(t, g, s): PV_Unit[f'Month {g}'].iloc[t - 1]
       for t in RNGTime for g in RNGMonth for s in RNGScen}
 
@@ -257,14 +258,14 @@ class RealScale:
         Y_PVES = [model.addVars(Y_tgs, name='Y_PVES') for _ in RNGSta]
         Y_DGES = [model.addVars(Y_tgs, name='Y_DGES') for _ in RNGSta]
         Y_GridES = [model.addVars(Y_tgs, name='Y_GridES') for _ in RNGSta]
-        Y_PVL = [model.addVars(Y_tgs, name='Y_PVL') for _ in RNGSta
+        Y_PVL = [model.addVars(Y_tgs, name='Y_PVL') for _ in RNGSta]
         Y_DGL = [model.addVars(Y_tgs, name='Y_DGL') for _ in RNGSta]
         Y_ESL = [model.addVars(Y_tgs, name='Y_ESL') for _ in RNGSta]
         Y_GridL = [model.addVars(Y_tgs, name='Y_GridL') for _ in RNGSta]
         Y_LH = [model.addVars(Y_htgs, name='Y_LH') for _ in RNGSta]  # Load served
         Y_LL = [model.addVars(Y_htgs, name='Y_LL') for _ in RNGSta]  # Load lost
         Y_LT = [model.addVars(Y_htgs, name='Y_LT') for _ in RNGSta]  # Load transferred
-        Y_PVCur = [model.addVars(Y_tgs, name='Y_PVCur') for _ in RNGSta
+        Y_PVCur = [model.addVars(Y_tgs, name='Y_PVCur') for _ in RNGSta]
         Y_DGCur = [model.addVars(Y_tgs, name='Y_DGCur') for _ in RNGSta]
         Y_PVGrid = [model.addVars(Y_tgs, name='Y_DGGrid') for _ in RNGSta]
         Y_DGGrid = [model.addVars(Y_tgs, name='Y_DGGrid') for _ in RNGSta]
@@ -272,8 +273,9 @@ class RealScale:
         E = [model.addVars(Y_tgs, name='E') for _ in RNGSta]
         U_E = [model.addVars(Y_tgs, vtype=GRB.BINARY, name='U_ES') for _ in RNGSta]
 
-        tt = time.time() - tt
-        print(f'Build variables: {tt}')
+        te = time.time() - tt
+        tt = time.time()
+        print(f'Build variables: {te}')
 
         '''Constraints'''
         for ii in RNGSta:
@@ -295,13 +297,13 @@ class RealScale:
                              for t in RNGTimeMinus for g in RNGMonth for s in RNGScen)
 
             # Assigned load decomposition
-            model.addConstrs(quicksum(L[(h, t, g, s)] for h in RNGHouse) >=
+            model.addConstrs(quicksum(L[ii][(h, t, g, s)] for h in RNGHouse) >=
                              Eta_i * (Y_ESL[ii][(t, g, s)] + Y_DGL[ii][(t, g, s)] + Y_PVL[ii][(t, g, s)]) +
                              Y_GridL[ii][(t, g, s)]
                              for t in RNGTime for g in RNGMonth for s in RNGScen)
 
             # Load decomposition
-            model.addConstrs(Y_LH[ii][(h, t, g, s)] + Y_LL[ii][(h, t, g, s)] + Y_LT[ii][(h, t, g, s)] == L[(h, t, g, s)]
+            model.addConstrs(Y_LH[ii][(h, t, g, s)] + Y_LL[ii][(h, t, g, s)] + Y_LT[ii][(h, t, g, s)] == L[ii][(h, t, g, s)]
                              for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen)
 
             # PV power decomposition
@@ -330,8 +332,9 @@ class RealScale:
                         model.addConstrs(Y_PVGrid[ii][(t, g, s)] + Y_ESGrid[ii][(t, g, s)] + Y_DGGrid[ii][(t, g, s)] == 0
                                          for t in Out_Time[(g, s)] for s in RNGScen)
 
-        tt = time.time() - tt
-        print(f'Build constraints: {tt}')
+        te = time.time() - tt
+        tt = time.time()
+        print(f'Build constraints: {te}')
 
         '''Costs'''
         Costs = []
@@ -349,26 +352,22 @@ class RealScale:
                                                                      Y_DGCur[ii][(t, g, s)] + Y_DGES[ii][(t, g, s)])
                                                          for t in RNGTime for g in RNGMonth for s in RNGScen))
             # Import/Export cost
-            # Defining grid import/export amount for cost evaluation
-            GridImport = quicksum(Y_GridL[ii][(t, g, s)] + Y_GridES[ii][(t, g, s)]
-                                  for t in RNGTime for g in RNGMonth for s in RNGScen)
-            GridExport = quicksum(Y_PVGrid[ii][(t, g, s)] + Y_ESGrid[ii][(t, g, s)] + Y_DGGrid[ii][(t, g, s)]
-                                  for t in RNGTime for g in RNGMonth for s in RNGScen)
 
-            Costs.append(quicksum(Probs[s] * (GridPlus * GridImport -
-                                              GridMinus * GridExport -
-                                              GenerPrice * X1[2] * PV[ii][(t, g, s)] -
-                                              quicksum(LoadPrice * Y_LH[ii][(h, t, g, s)]
-                                                       for h in RNGHouse))
+            Costs.append(quicksum(Probs[s] * (GridPlus * (Y_GridL[ii][(t, g, s)] + Y_GridES[ii][(t, g, s)]) -
+                                              GridMinus * (Y_PVGrid[ii][(t, g, s)] + Y_ESGrid[ii][(t, g, s)] + Y_DGGrid[ii][(t, g, s)]) -
+                                              GenerPrice * X1[2] * PV[(t, g, s)] -
+                                              LoadPrice * quicksum(Y_LH[ii][(h, t, g, s)]
+                                                                   for h in RNGHouse))
                                   for t in RNGTime for g in RNGMonth for s in RNGScen))
 
             # DRP cost
             Costs.append(quicksum(Probs[s] * quicksum(Y_LT[ii][(h, t, g, s)] * TransPrice[h - 1]
-                                                      for h in RNGHouse for t in RNGTime for g in RNGMonth)
-                                  for s in RNGScen))
+                                                      for h in RNGHouse)
+                                  for t in RNGTime for g in RNGMonth for s in RNGScen))
         
-        tt = time.time() - tt
-        print(f'Build costs: {tt}')
+        te = time.time() - tt
+        tt = time.time()
+        print(f'Build costs: {te}')
 
         primal_cost = Capital + GenPar * quicksum(Costs)
         model.setObjective(primal_cost, sense=GRB.MINIMIZE)
