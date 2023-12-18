@@ -1,4 +1,5 @@
 import pickle
+import time
 import random
 import numpy as np
 import pandas as pd
@@ -40,7 +41,7 @@ RNGTimeMinus = range(1, T)
 RNGMonth = range(1, MCount + 1)
 RNGHouse = range(1, HCount + 1)
 RNGScen = range(1, len(Scens) + 1)
-RNGSta = (1, 2)
+RNGSta = (0, 1)
 
 # Global parameters
 Budget = 100000
@@ -226,6 +227,8 @@ class RealScale:
 
         model = gurobipy.Model('MIP', env=env)
 
+        tt = time.time()
+
         '''Investment variables'''
         X1 = model.addVars(RNGDvc, vtype=GRB.INTEGER, name='X1')
         # Bounds on X decisions
@@ -251,36 +254,39 @@ class RealScale:
         self.Y_tgs = Y_tgs
         self.Y_htgs = Y_htgs
 
-        Y_PVES = [model.addVars(Y_tgs, name='Y_PVES'), model.addVars(Y_tgs, name='Y_PVES')]
-        Y_DGES = [model.addVars(Y_tgs, name='Y_DGES'), model.addVars(Y_tgs, name='Y_DGES')]
-        Y_GridES = [model.addVars(Y_tgs, name='Y_GridES'), model.addVars(Y_tgs, name='Y_GridES')]
-        Y_PVL = [model.addVars(Y_tgs, name='Y_PVL'), model.addVars(Y_tgs, name='Y_PVL')]
-        Y_DGL = [model.addVars(Y_tgs, name='Y_DGL'), model.addVars(Y_tgs, name='Y_PVL')]
-        Y_ESL = [model.addVars(Y_tgs, name='Y_ESL'), model.addVars(Y_tgs, name='Y_ESL')]
-        Y_GridL = [model.addVars(Y_tgs, name='Y_GridL'), model.addVars(Y_tgs, name='Y_GridL')]
-        Y_LH = [model.addVars(Y_htgs, name='Y_LH'), model.addVars(Y_htgs, name='Y_LH')]  # Load served
-        Y_LL = [model.addVars(Y_htgs, name='Y_LL'), model.addVars(Y_htgs, name='Y_LL')]  # Load lost
-        Y_LT = [model.addVars(Y_htgs, name='Y_LT'), model.addVars(Y_htgs, name='Y_LT')]  # Load transferred
-        Y_PVCur = [model.addVars(Y_tgs, name='Y_PVCur'), model.addVars(Y_tgs, name='Y_PVCur')]
-        Y_DGCur = [model.addVars(Y_tgs, name='Y_DGCur'), model.addVars(Y_tgs, name='Y_DGCur')]
-        Y_PVGrid = [model.addVars(Y_tgs, name='Y_DGGrid'), model.addVars(Y_tgs, name='Y_DGGrid')]
-        Y_DGGrid = [model.addVars(Y_tgs, name='Y_DGGrid'), model.addVars(Y_tgs, name='Y_DGGrid')]
-        Y_ESGrid = [model.addVars(Y_tgs, name='Y_ESGrid'), model.addVars(Y_tgs, name='Y_ESGrid')]
-        E = [model.addVars(Y_tgs, name='E'), model.addVars(Y_tgs, name='E')]
-        U_E = [model.addVars(Y_tgs, vtype=GRB.BINARY, name='U_ES'), model.addVars(Y_tgs, vtype=GRB.BINARY, name='U_ES')]
+        Y_PVES = [model.addVars(Y_tgs, name='Y_PVES') for _ in RNGSta]
+        Y_DGES = [model.addVars(Y_tgs, name='Y_DGES') for _ in RNGSta]
+        Y_GridES = [model.addVars(Y_tgs, name='Y_GridES') for _ in RNGSta]
+        Y_PVL = [model.addVars(Y_tgs, name='Y_PVL') for _ in RNGSta
+        Y_DGL = [model.addVars(Y_tgs, name='Y_DGL') for _ in RNGSta]
+        Y_ESL = [model.addVars(Y_tgs, name='Y_ESL') for _ in RNGSta]
+        Y_GridL = [model.addVars(Y_tgs, name='Y_GridL') for _ in RNGSta]
+        Y_LH = [model.addVars(Y_htgs, name='Y_LH') for _ in RNGSta]  # Load served
+        Y_LL = [model.addVars(Y_htgs, name='Y_LL') for _ in RNGSta]  # Load lost
+        Y_LT = [model.addVars(Y_htgs, name='Y_LT') for _ in RNGSta]  # Load transferred
+        Y_PVCur = [model.addVars(Y_tgs, name='Y_PVCur') for _ in RNGSta
+        Y_DGCur = [model.addVars(Y_tgs, name='Y_DGCur') for _ in RNGSta]
+        Y_PVGrid = [model.addVars(Y_tgs, name='Y_DGGrid') for _ in RNGSta]
+        Y_DGGrid = [model.addVars(Y_tgs, name='Y_DGGrid') for _ in RNGSta]
+        Y_ESGrid = [model.addVars(Y_tgs, name='Y_ESGrid') for _ in RNGSta]
+        E = [model.addVars(Y_tgs, name='E') for _ in RNGSta]
+        U_E = [model.addVars(Y_tgs, vtype=GRB.BINARY, name='U_ES') for _ in RNGSta]
+
+        tt = time.time() - tt
+        print(f'Build variables: {tt}')
 
         '''Constraints'''
         for ii in RNGSta:
             # ES levels
             model.addConstrs(E[ii][(1, g, s)] == SOC_UB * X1[1] for g in RNGMonth for s in RNGScen)
-            model.addConstrs(SOC_LB * X1[1] <= E[ii][(t, g, s, 1)] for t in RNGTime for g in RNGMonth for s in RNGScen)
+            model.addConstrs(SOC_LB * X1[1] <= E[ii][(t, g, s)] for t in RNGTime for g in RNGMonth for s in RNGScen)
             model.addConstrs(E[ii][(t, g, s)] <= SOC_UB * X1[1] for t in RNGTime for g in RNGMonth for s in RNGScen)
 
             model.addConstrs(E[ii][(1, g, s)] == SOC_UB * (X1[1] + X2[1]) for g in RNGMonth for s in RNGScen)
             model.addConstrs(
-                SOC_LB * (X1[1] + X2[1]) <= E[ii][(t, g, s, 2)] for t in RNGTime for g in RNGMonth for s in RNGScen)
+                SOC_LB * (X1[1] + X2[1]) <= E[ii][(t, g, s)] for t in RNGTime for g in RNGMonth for s in RNGScen)
             model.addConstrs(
-                E[ii][(t, g, s, 2)] <= SOC_UB * (X1[1] + X2[1]) for t in RNGTime for g in RNGMonth for s in RNGScen)
+                E[ii][(t, g, s)] <= SOC_UB * (X1[1] + X2[1]) for t in RNGTime for g in RNGMonth for s in RNGScen)
 
             # Balance of power flow
             model.addConstrs(E[ii][(t + 1, g, s)] == E[ii][(t, g, s)] +
@@ -324,6 +330,8 @@ class RealScale:
                         model.addConstrs(Y_PVGrid[ii][(t, g, s)] + Y_ESGrid[ii][(t, g, s)] + Y_DGGrid[ii][(t, g, s)] == 0
                                          for t in Out_Time[(g, s)] for s in RNGScen)
 
+        tt = time.time() - tt
+        print(f'Build constraints: {tt}')
 
         '''Costs'''
         Costs = []
@@ -358,6 +366,9 @@ class RealScale:
             Costs.append(quicksum(Probs[s] * quicksum(Y_LT[ii][(h, t, g, s)] * TransPrice[h - 1]
                                                       for h in RNGHouse for t in RNGTime for g in RNGMonth)
                                   for s in RNGScen))
+        
+        tt = time.time() - tt
+        print(f'Build costs: {tt}')
 
         primal_cost = Capital + GenPar * quicksum(Costs)
         model.setObjective(primal_cost, sense=GRB.MINIMIZE)
