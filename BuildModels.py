@@ -28,7 +28,7 @@ def geneCases(consumer):
 T = 168
 DVCCount = 3
 MCount = 12
-HCount = 40
+HCount = 30
 OutageStart = 16
 
 # Import data
@@ -53,19 +53,20 @@ PA_Factor = (Interest_Rate * (1 + Interest_Rate) ** Years) / ((1 + Interest_Rate
 C = {1: 600, 2: 2780, 3: 500}  # order is: [ES, PV, DG]
 CO = {i: C[i] * (PA_Factor + Operational_Rate) for i in (1, 2, 3)}
 
-UB0 = {1: 100, 2: 80, 3: 60}
-LB0 = {1: 20, 2: 10, 3: 10}
+
+UB0 = {1: 100, 2: 100, 3: 60}
+LB0 = {1: 20, 2: 20, 3: 10}
 UB1 = {1: 50, 2: 40, 3: 30}
 LB1 = {1: 0, 2: 0, 3: 0}
 
-alpha, beta, zeta = 0.5, 0.2, 0.8
+alpha, beta, zeta = 0.5, 0.2, 1.95
 # alpha: selling to grid coefficient, beta: renewable energy generation, zeta: selling to households coefficient
-GridPlus = 0.1497  # $/kWh
+GridPlus = 0.1497 # $/kWh
 GridMinus = alpha * GridPlus
 GenerPrice = beta * GridPlus
 LoadPrice = zeta * GridPlus
 
-VoLL = np.multiply([1.5 for _ in RNGHouse], GridPlus)
+VoLL = np.multiply([1.3 for _ in RNGHouse], GridPlus)
 TransMax = 0.3  # %
 TransPrice = [v * TransMax for v in VoLL]
 
@@ -83,12 +84,16 @@ DGCurPrice = GridSellPrice + DGEffic
 SOC_UB, SOC_LB = 0.9, 0.1
 Eta_c = 0.8
 Eta_i = 0.9
-GenPar = (365 / 7) / 12
+GenPar = (365 / 7) / MCount
 
 # Define the load profiles and PV profiles
 L1 = {(h, t, g, s): Load[h - 1][f'Month {g}'].iloc[t - 1]
      for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen}
-L = [L1 for _ in RNGSta]
+
+L2 = {(h, t, g, s): 1.3 * Load[h - 1][f'Month {g}'].iloc[t - 1]
+for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen}
+
+L = [L1, L2]
 PV = {(t, g, s): PV_Unit[f'Month {g}'].iloc[t - 1]
       for t in RNGTime for g in RNGMonth for s in RNGScen}
 
@@ -282,6 +287,7 @@ class RealScale:
         Y_ESGrid = [model.addVars(Y_tgs, name='Y_ESGrid') for _ in RNGSta]
         E = [model.addVars(Y_tgs, name='E') for _ in RNGSta]
         U_E = [model.addVars(Y_tgs, vtype=GRB.BINARY, name='U_ES') for _ in RNGSta]
+        U_G = [model.addVars(Y_tgs, vtype=GRB.BINARY, name='U_G') for _ in RNGSta]
 
         te = time.time() - tt
         tt = time.time()
@@ -326,16 +332,15 @@ class RealScale:
 
 
                         # ES charging/discharging constraints
-                        if ii == 0:
-                            model.addConstr(Y_ESL[ii][(t, g, s)] + Y_ESGrid[ii][(t, g, s)] <=
-                                             UB0[1] * U_E[ii][(t, g, s)], name='')
-                            model.addConstr(Y_PVES[ii][(t, g, s)] + Y_GridES[ii][(t, g, s)] + Y_DGES[ii][(t, g, s)] <=
-                                             UB0[1] * (1 - U_E[ii][(t, g, s)]), name='')
-                        else:
-                            model.addConstr(Y_ESL[ii][(t, g, s)] + Y_ESGrid[ii][(t, g, s)] <=
-                                             (UB0[1] + UB1[1]) * U_E[ii][(t, g, s)], name='')
-                            model.addConstr(Y_PVES[ii][(t, g, s)] + Y_GridES[ii][(t, g, s)] + Y_DGES[ii][(t, g, s)] <=
-                                             (UB0[1] + UB1[1]) * (1 - U_E[ii][(t, g, s)]), name='')
+                        model.addConstr(Y_ESL[ii][(t, g, s)] + Y_ESGrid[ii][(t, g, s)] <=
+                                            (UB0[1] + ii * UB1[1]) * U_E[ii][(t, g, s)], name='')
+                        model.addConstr(Y_PVES[ii][(t, g, s)] + Y_GridES[ii][(t, g, s)] + Y_DGES[ii][(t, g, s)] <=
+                                            (UB0[1] + ii * UB1[1]) * (1 - U_E[ii][(t, g, s)]), name='')
+
+                        model.addConstr(Y_ESGrid[ii][(t, g, s)] + Y_PVGrid[ii][(t, g, s)] + Y_DGGrid[ii][(t, g, s)] <=
+                        (UB0[1] + UB0[2] + UB0[3]+ ii * (UB1[1] + UB1[2] + UB1[3])) * U_G[ii][(t, g, s)], name='')
+                        model.addConstr(Y_GridES[ii][(t, g, s)] + Y_GridL[ii][(t, g, s)] <=
+                        (UB0[1] + UB0[2] + UB0[3]+ ii * (UB1[1] + UB1[2] + UB1[3])) * (1 - U_G[ii][(t, g, s)]), name='')
 
 
                         # Prohibited transaction with the grid during outage
