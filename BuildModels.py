@@ -61,7 +61,7 @@ LB1 = {1: 0, 2: 0, 3: 0}
 
 alpha, beta, zeta = 0.5, 0.2, 1.95
 # alpha: selling to grid coefficient, beta: renewable energy generation, zeta: selling to households coefficient
-GridPlus = 0.1497 # $/kWh
+GridPlus = 0.1497  # $/kWh
 GridMinus = alpha * GridPlus
 GenerPrice = beta * GridPlus
 LoadPrice = zeta * GridPlus
@@ -338,9 +338,9 @@ class RealScale:
                                             (UB0[1] + ii * UB1[1]) * (1 - U_E[ii][(t, g, s)]), name='')
 
                         model.addConstr(Y_ESGrid[ii][(t, g, s)] + Y_PVGrid[ii][(t, g, s)] + Y_DGGrid[ii][(t, g, s)] <=
-                        (UB0[1] + UB0[2] + UB0[3]+ ii * (UB1[1] + UB1[2] + UB1[3])) * U_G[ii][(t, g, s)], name='')
+                        (UB0[1] + UB0[2] + UB0[3] + ii * (UB1[1] + UB1[2] + UB1[3])) * U_G[ii][(t, g, s)], name='')
                         model.addConstr(Y_GridES[ii][(t, g, s)] + Y_GridL[ii][(t, g, s)] <=
-                        (UB0[1] + UB0[2] + UB0[3]+ ii * (UB1[1] + UB1[2] + UB1[3])) * (1 - U_G[ii][(t, g, s)]), name='')
+                        (UB0[1] + UB0[2] + UB0[3] + ii * (UB1[1] + UB1[2] + UB1[3])) * (1 - U_G[ii][(t, g, s)]), name='')
 
 
                         # Prohibited transaction with the grid during outage
