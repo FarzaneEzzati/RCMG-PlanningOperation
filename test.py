@@ -1,11 +1,16 @@
+# Dec 14, 2023. Repository was created to keep track of codings for DOE project.
+
+import copy
 import pickle
 import random
+import math
 import numpy as np
 import pandas as pd
-import gurobipy as gp
-from gurobipy import quicksum, GRB
+import time
 
 
-m = gp.Model()
-x = [m.addVars([(1, 2), (3, 4)]), m.addVars([(3, 6), (8, 9)])]
-print(x[1][(3,6)])
+with open('Data/OutageScenarios.pkl', 'rb') as handle:
+        scens, probs = pickle.load(handle)
+handle.close()
+print(probs, scens)
+
