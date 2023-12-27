@@ -7,10 +7,10 @@ import math
 import numpy as np
 import pandas as pd
 import time
-from BuildModelsWithTrans import RealScale
+from BuildModelsWithTrans import TS_SPModel
 
 if __name__ == '__main__':
-    model = RealScale()
-    tt = time.time()
-    print(model.Solve())
-    print(f'Run Time: {time.time()-tt}')
+    space = TS_SPModel()
+    space.BuildMasterProb()
+    X = {(i, j): 0 for i in range(0, 2) for j in range(1, 4)}
+    space.BuildSubProb(X, 3)
