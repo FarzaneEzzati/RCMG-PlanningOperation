@@ -14,9 +14,11 @@ def geneCases(consumer):
     with open('Data/OutageScenarios.pkl', 'rb') as handle:
         scens, probs = pickle.load(handle)
     handle.close()
+
     # Load profile of households
     lp1 = pd.read_csv('Data/Load_profile_1.csv')
     lp2 = pd.read_csv('Data/Load_profile_2.csv')
+
     # PV output for one unit (4kW)
     pv_profile = pd.read_csv('Data/PV_profiles.csv')
     return scens, probs, [random.choice([lp1, lp2]) for _ in range(consumer)], pv_profile
@@ -26,7 +28,7 @@ def geneCases(consumer):
 T = 168
 DVCCount = 3
 MCount = 12
-HCount = 40
+HCount = 30
 OutageStart = 16
 
 # Import data
@@ -39,7 +41,7 @@ RNGTimeMinus = range(1, T)
 RNGMonth = range(1, MCount + 1)
 RNGHouse = range(1, HCount + 1)
 RNGScen = range(1, len(Scens) + 1)
-RNGSta = (0, 1)  # 0: year before reinvestment, 1: year after reinvestment
+RNGSta = (0, 1)
 DontTran = [24 * i + 16 + j for i in range(5) for j in range(5)]  # Each week from hour 16 to 20 transfer is prohibited.
 
 # Global parameters
@@ -65,9 +67,9 @@ GridMinus = alpha * GridPlus
 GenerPrice = beta * GridPlus
 LoadPrice = zeta * GridPlus
 
-VoLL = {h: 1.5 * GridPlus for h in RNGHouse}
+VoLL = np.multiply([1.3 for _ in RNGHouse], GridPlus)
 TransMax = 0.3  # %
-TransPrice = TransMax * np.mean([VoLL[key] for key in VoLL.keys()])
+TransPrice = TransMax * np.mean(VoLL)
 
 ES_gamma = 0.85
 DG_gamma = 0.4  # litr/kW
@@ -96,8 +98,7 @@ L = [L1, L2]
 PV = {(t, g, s): PV_Unit[f'Month {g}'].iloc[t - 1]
       for t in RNGTime for g in RNGMonth for s in RNGScen}
 
-
-class TS_SPModel:
+class RealScale:
 
     def __init__(self):
         Out_Time = {(g, s): 0 for s in RNGScen for g in RNGMonth}
@@ -106,11 +107,12 @@ class TS_SPModel:
                 for g in RNGMonth:
                     Out_Time[(g, s)] = [OutageStart + j for j in range(int(Scens[s]))]
 
-        model = gurobipy.Model('MasterProb', env=env)
+        model = gurobipy.Model('MIP', env=env)
+
         tt = time.time()
         '''Investment & Reinvestment variables'''
-        X1 = model.addVars(RNGDvc, name='X1')  # if 0, Integer defined, if 1, continuous defined
-        X2 = model.addVars(RNGDvc, name='X2')
+        X1 = model.addVars(RNGDvc, vtype=GRB.INTEGER, name='X1')
+        X2 = model.addVars(RNGDvc, vtype=GRB.INTEGER, name='X2')
 
         for d in RNGDvc:
             # Bounds on X decisions
@@ -118,57 +120,41 @@ class TS_SPModel:
             model.addConstr(X1[d] >= LB0[d], name='LoB0')
             model.addConstr(X2[d] <= UB1[d], name='UpB0')
             model.addConstr(X2[d] >= LB1[d], name='LoB0')
-
-        # Investment constraint
+            # Investment constraint
         model.addConstr(quicksum(X1[d] * C[d] for d in RNGDvc) <= Budget1, name='IB')
         # ReInvestment constraint
         model.addConstr(quicksum(X2[d] * C[d] for d in RNGDvc) <= Budget2, name='RIB')
 
-        # Formulate capital cost
-        Capital = quicksum((X1[d] + X2[d]) * CO[d] for d in RNGDvc)
-
-
-        ''' 
-        we need to save the master problem and start creating subproblems separately.
-        Note that Y variables should not be defined for the master problem because the benders' cut only have x vars in.
-        '''
-        eta = model.addVar(lb=-float('inf'), name='eta')
-        model.setObjective(Capital + eta, sense=GRB.MINIMIZE)
-        model.update()
-        model.write('Models/MasterProb.mps')
-
-        for s in RNGScen:
-
-            '''Scheduling variables'''
-            Y_tgs = [(t, g)
-                     for t in RNGTime for g in RNGMonth for s in RNGScen]
-            Y_htgs = [(h, t, g)
-                      for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen]
-            Y_ttgs = [(t, to, g, s)
-                     for t in RNGTime for to in RNGTime for g in RNGMonth for s in RNGScen]
+        '''Scheduling variables'''
+        Y_tgs = [(t, g, s)
+                 for t in RNGTime for g in RNGMonth for s in RNGScen]
+        Y_htgs = [(h, t, g, s)
+                  for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen]
+        Y_ttgs = [(t, to, g, s)
+                  for t in RNGTime for to in RNGTime for g in RNGMonth for s in RNGScen]
 
         self.Y_tgs = Y_tgs
         self.Y_htgs = Y_htgs
         self.Y_ttgs = Y_ttgs
 
-        Y_PVES = [model.addVars(Y_tgs, name='Y_PVES') for _ in RNGSta]  # PV to ES
-        Y_DGES = [model.addVars(Y_tgs, name='Y_DGES') for _ in RNGSta]  # DE to ES
-        Y_GridES = [model.addVars(Y_tgs, name='Y_GridES') for _ in RNGSta]  # Grid to ES
-        Y_PVL = [model.addVars(Y_tgs, name='Y_PVL') for _ in RNGSta]  # Pv to L
-        Y_DGL = [model.addVars(Y_tgs, name='Y_DGL') for _ in RNGSta]  # Dg to L
-        Y_ESL = [model.addVars(Y_tgs, name='Y_ESL') for _ in RNGSta]  # ES to L
-        Y_GridL = [model.addVars(Y_tgs, name='Y_GridL') for _ in RNGSta]  # Grid to L
+        Y_PVES = [model.addVars(Y_tgs, name='Y_PVES') for _ in RNGSta]
+        Y_DGES = [model.addVars(Y_tgs, name='Y_DGES') for _ in RNGSta]
+        Y_GridES = [model.addVars(Y_tgs, name='Y_GridES') for _ in RNGSta]
+        Y_PVL = [model.addVars(Y_tgs, name='Y_PVL') for _ in RNGSta]
+        Y_DGL = [model.addVars(Y_tgs, name='Y_DGL') for _ in RNGSta]
+        Y_ESL = [model.addVars(Y_tgs, name='Y_ESL') for _ in RNGSta]
+        Y_GridL = [model.addVars(Y_tgs, name='Y_GridL') for _ in RNGSta]
         Y_LH = [model.addVars(Y_htgs, name='Y_LH') for _ in RNGSta]  # Load served
         Y_LL = [model.addVars(Y_htgs, name='Y_LL') for _ in RNGSta]  # Load lost
         Y_LT = [model.addVars(Y_ttgs, name='Y_LT') for _ in RNGSta]  # Load transferred
-        Y_PVCur = [model.addVars(Y_tgs, name='Y_PVCur') for _ in RNGSta]  # PV Curtailed
-        Y_DGCur = [model.addVars(Y_tgs, name='Y_DGCur') for _ in RNGSta]  # DG curtailed
-        Y_PVGrid = [model.addVars(Y_tgs, name='Y_DGGrid') for _ in RNGSta]  # PV to Grid
-        Y_DGGrid = [model.addVars(Y_tgs, name='Y_DGGrid') for _ in RNGSta]  # Dg to Grid
-        Y_ESGrid = [model.addVars(Y_tgs, name='Y_ESGrid') for _ in RNGSta]  # ES to Grid
-        E = [model.addVars(Y_tgs, name='E') for _ in RNGSta]  # ES level of energy
-        U_E = [model.addVars(Y_tgs, name='U_ES') for _ in RNGSta]  # Charge/discharge binary
-        U_G = [model.addVars(Y_tgs, name='U_G') for _ in RNGSta]  # Import/export binary
+        Y_PVCur = [model.addVars(Y_tgs, name='Y_PVCur') for _ in RNGSta]
+        Y_DGCur = [model.addVars(Y_tgs, name='Y_DGCur') for _ in RNGSta]
+        Y_PVGrid = [model.addVars(Y_tgs, name='Y_DGGrid') for _ in RNGSta]
+        Y_DGGrid = [model.addVars(Y_tgs, name='Y_DGGrid') for _ in RNGSta]
+        Y_ESGrid = [model.addVars(Y_tgs, name='Y_ESGrid') for _ in RNGSta]
+        E = [model.addVars(Y_tgs, name='E') for _ in RNGSta]
+        U_E = [model.addVars(Y_tgs, vtype=GRB.BINARY, name='U_ES') for _ in RNGSta]
+        U_G = [model.addVars(Y_tgs, vtype=GRB.BINARY, name='U_G') for _ in RNGSta]
 
         te = time.time() - tt
         tt = time.time()
@@ -192,11 +178,12 @@ class TS_SPModel:
                                          Eta_i * (Y_ESL[ii][(t, g, s)] + Y_DGL[ii][(t, g, s)] + Y_PVL[ii][(t, g, s)]) +
                                          Y_GridL[ii][(t, g, s)], name='')
 
+
                         for h in RNGHouse:
                             # Load decomposition
                             model.addConstr(Y_LH[ii][(h, t, g, s)] +
                                             Y_LL[ii][(h, t, g, s)] +
-                                            quicksum(Y_LT[ii][(t, to, g, s)] for to in range(t, T+1)) ==
+                                            quicksum(Y_LT[ii][(t, to, g, s)] for to in range(t, T + 1)) ==
                                             L[ii][(h, t, g, s)], name='')
 
                         if t in DontTran:
@@ -204,7 +191,7 @@ class TS_SPModel:
                             model.addConstrs(Y_LT[ii][(t, to, g, s)] == 0 for to in range(t, T + 1))
                         else:
                             # Max load transfer
-                            model.addConstr(quicksum(Y_LT[ii][(t, to, g, s)] for to in range(t, T+1)) <=
+                            model.addConstr(quicksum(Y_LT[ii][(t, to, g, s)] for to in range(t, T + 1)) <=
                                             TransMax * np.sum([L[ii][(h, t, g, s)] for h in RNGHouse]), name='')
 
                         # Load transfer and E level
@@ -213,6 +200,7 @@ class TS_SPModel:
 
                         # Prohibited transfer to self
                         model.addConstr(Y_LT[ii][(t, t, g, s)] == 0, name='')
+
 
                         # PV power decomposition
                         model.addConstr(Y_PVL[ii][(t, g, s)] + Y_PVES[ii][(t, g, s)] +
@@ -258,7 +246,7 @@ class TS_SPModel:
         '''Costs'''
         OprCosts = 0
         # Investment cost
-
+        Capital = quicksum((X1[d] + X2[d]) * CO[d] for d in RNGDvc)
         for ii in RNGSta:
             for s in RNGScen:
                 cost = 0
@@ -267,7 +255,7 @@ class TS_SPModel:
                         # Curtailment cost
                         cost += PVCurPrice * (Y_PVCur[ii][(t, g, s)] + Y_DGCur[ii][(t, g, s)])
                         # Losing load cost
-                        cost += quicksum(VoLL[h] * Y_LL[ii][(h, t, g, s)] for h in RNGHouse)
+                        cost += quicksum(VoLL[h - 1] * Y_LL[ii][(h, t, g, s)] for h in RNGHouse)
                         # DG cost
                         cost += DGEffic * (Y_DGL[ii][(t, g, s)] + Y_DGGrid[ii][(t, g, s)] +
                                                 Y_DGCur[ii][(t, g, s)] + Y_DGES[ii][(t, g, s)])
@@ -293,7 +281,7 @@ class TS_SPModel:
         self.X1 = X1
         self.X2 = X2
         self.Y_LL1 = Y_LL[0]
-
+        print(model)
 
     def Solve(self):
         print(self.model)
@@ -304,3 +292,7 @@ class TS_SPModel:
         print(f'Total lost {np.sum(lost1)}')
         print(f'Load: {np.sum([L[0][(h, t, g, s)] for t in RNGTime for g in RNGMonth for s in RNGScen for h in RNGHouse])}')
         return [[self.X1[1].x, self.X1[2].x, self.X1[3].x], [self.X2[1].x, self.X2[2].x, self.X2[3].x]]
+
+
+if __name__ == '__main__':
+    model = RealScale()
