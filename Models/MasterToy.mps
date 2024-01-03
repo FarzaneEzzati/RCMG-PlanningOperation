@@ -7,7 +7,7 @@ COLUMNS
     eta       OBJ       1
 RHS
 BOUNDS
- UP BND1      X[1]      2
- UP BND1      X[2]      2
+ UP BND1      X[1]      1
+ UP BND1      X[2]      1
  LO BND1      eta       -100
 ENDATA

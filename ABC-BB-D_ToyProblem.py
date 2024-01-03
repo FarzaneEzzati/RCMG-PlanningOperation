@@ -10,19 +10,42 @@ env = gurobipy.Env()
 env.setParam('OutputFlag', 0)
 
 
+class EquiDeter:
+    def __init__(self):
+        model = gurobipy.Model('EquiDeter', env=env)
+        self.indices = [1, 2]
+        X = model.addVars(self.indices, lb=0, ub=1, name='X')
+        Y1 = model.addVars([1, 2, 3, 4], lb=0, ub=5, name='Y1')
+        Y2 = model.addVars([1, 2, 3, 4], lb=0, ub=5, name='Y2')
+        R = model.addVars([1, 2])
+        model.addConstr(2 * Y1[1] - 3 * Y1[2] + 4 * Y1[3] + 5 * Y1[4] - R[1] + X[1] <= 10, name='C1-1')
+        model.addConstr(6 * Y1[1] + Y1[2] + 3 * Y1[3] + 2 * Y1[4] - R[1] + X[2] <= 4, name='C2-1')
+        model.addConstr(2 * Y2[1] - 3 * Y2[2] + 4 * Y2[3] + 5 * Y2[4] - R[2] + X[1] <= 6, name='C1-2')
+        model.addConstr(6 * Y2[1] + Y2[2] + 3 * Y2[3] + 2 * Y2[4] - R[2] + X[2] <= 2, name='C2-2')
+        model.setObjective(- 1.5 * X[1] - 4 * X[2] +
+                           0.5 * (-16 * Y1[1] - 19 * Y1[2] - 23 * Y1[3] - 28 * Y1[4] + 100 * R[1]) +
+                           0.5 * (-16 * Y2[1] - 19 * Y2[2] - 23 * Y2[3] - 28 * Y2[4] + 100 * R[2]), GRB.MINIMIZE)
+        model.optimize()
+        print(model.ObjVal)
+        print(X)
+
+
 class MasterProb:
     def __init__(self):
-        M = 100
-        master = gurobipy.Model('MaterToy', env=env)
-        self.indices = [1, 2]
-        X = master.addVars(self.indices, lb=0, ub=1, name='X')
-        eta = master.addVar(lb=-M, name='eta')
-        master.setObjective(- 1.5 * X[1] - 4 * X[2] + eta, sense=GRB.MINIMIZE)
-        master.write('Models/MasterToy.mps')
-        master.update()
-        self.master = master
-        self.X = X
-        self.eta = eta
+        # Load the indices
+        with open(f'Models/MasterToy-indices.pkl', 'rb') as handle:
+            self.indices = pickle.load(handle)
+        handle.close()
+
+        # Read the saved master problem
+        self.master = gurobipy.read('Models/MasterToy.mps', env=env)
+
+        # Indicate the X vars
+        self.X = {}
+        for i in self.indices:
+            self.X[i] = self.master.getVarByName(f'X[{i}]')
+        self.eta = self.master.getVarByName('eta')
+
     def Solve(self):
         self.master.optimize()
         if self.master.status in (1, 2):  # Model feasible
@@ -46,33 +69,33 @@ class MasterProb:
 
 
 class SubProb:
-    def __init__(self, rMatrix):
-        sub = gurobipy.Model('Sub', env=env)
+    def __init__(self, name):
+        # Load the indices
+        with open(name, 'rb') as handle:
+            self.X_indices, self.Y_indices, self.XX, self.YY = pickle.load(handle)
+        handle.close()
 
-        self.x_indices = [1, 2]
-        X = sub.addVars(self.x_indices, lb=0, ub=1, name='X')
-        self.XX = range(1, 3)
+        # Read the saved sub-problem
+        self.sub = gurobipy.read(name, env=env)
 
-        Y = sub.addVars([1, 2, 3, 4], lb=0, ub=5, name='Y')
-        R = sub.addVar()
-        self.YY = range(3, 8)
-        sub.update()
-        sub.addConstr(2*Y[1] - 3*Y[2] + 4*Y[3] + 5*Y[4] - R + X[1] <= rMatrix[1], name='C1')
-        sub.addConstr(6*Y[1] + Y[2] + 3*Y[3] + 2*Y[4] - R + X[2] <= rMatrix[2], name='C2')
-        sub.setObjective(-16 * Y[1] - 19 * Y[2] - 23 * Y[3] - 28 * Y[4] + 100 * R, GRB.MINIMIZE)
-        sub.update()
+        # Indicate the X vars
+        self.X = {}
+        for i in self.X_indices:
+            self.X[i] = self.sub.getVarByName(f'X[{i}]')
 
+        # Indicate the Y vars
+        self.Y = {}
+        for i in [1, 2, 3, 4]:
+            self.Y[i] = self.sub.getVarByName(f'Y{i}')
 
-        self.sub = sub
-        self.X = X
+        self.R = self.sub.getVarByName('R')
 
 
     '''This function fixes variables x in sub-problems,
      and then resolve the sub-problem.'''
-    def FixSolve(self, x):
-        for i in self.x_indices:
+    def FixXSolve(self, x):
+        for i in self.X_indices:
             self.sub.addConstr(self.X[i] == x[i], name=f'FixX{i}')
-
         self.sub.update()
         self.sub.optimize()
         pi_list = {}
@@ -81,12 +104,14 @@ class SubProb:
             if 'FixX' not in constraint.ConstrName:
                 pi_list[counter] = constraint.Pi
                 counter += 1
-
-        for i in self.x_indices:
+        for i in self.X_indices:
             self.sub.remove(self.sub.getConstrByName(f'FixX{i}'))
         self.sub.update()
 
         return pi_list
+
+    def Convexify(self):
+        pass
 
     def AddBound(self, YBound):
         # YBound is a list with two elements.
@@ -123,6 +148,7 @@ class SubProb:
 
 if __name__ == '__main__':
     Probs = {1: 0.5, 2: 0.5}
+
     T1 = {0: MasterProb()}
     X, v = T1[0].Solve()
     T1_v = {0: v}
@@ -130,7 +156,7 @@ if __name__ == '__main__':
     # T1 is a list of master problems at node t (the start is with root node 0).
     # For a newly created node, the class instance is coppied.
 
-    SP = {0: [SubProb({1: 10, 2: 3}), SubProb({1: 5, 2: 2})]}
+    SP = {0: [SubProb('Models/SubToy1.mps'), SubProb('Models/SubToy2.mps')]}
     # SP is the list of all sub-problem instances at node t (the key of dictionary).
     # Not that for each node t we have different sub-problem instances.
 
@@ -155,7 +181,8 @@ if __name__ == '__main__':
 
     epsilon = 0.0001   # Stopping tolerance
     terminate = 0
-    while terminate < 3:
+    while terminate < 2:
+        # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Branching Till Integer Found <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
         while True:  # while number 1
 
             # Update the global lower bound + get the corresponding node t-bar
@@ -193,13 +220,14 @@ if __name__ == '__main__':
             # end of while number 1
 
 
+        # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Benders' Cut Generation <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
         # We now have t_bar that determines which x need to be used for the next step.
         # Here we need to generate Benders' cuts
-        PIRs = []
-        PITs = []
+        PIRs = []  # a list
+        PITs = []  # a list
         for sp in SP[t[k]]:
             # Get pi as dictionary. keys start from 1.
-            pi = sp.FixSolve(T1_x[t[k]])
+            pi = sp.FixXSolve(T1_x[t[k]])
             # Get T, r
             T, W, r = sp.GetTWr()
             # Calculate pi*r and pi*T and save in PIR and PIT
@@ -220,13 +248,16 @@ if __name__ == '__main__':
 
         # Solve the model corresponding to the node with added benders cut
         T1_x[t[k]], T1_v[t[k]] = T1[t[k]].Solve()
-        print(T1_x[t[k]])
 
         # Add new Benders cut to Gx
         b_cut += 1
         Gx[t[k]].append(b_cut)
 
+        # Increase iteration
+        k += 1
         terminate += 1
-    print(T1)
-    print(T1_x)
-    print(T1_v)
+    print(f'B&B: {v}')
+    EquiDeter()
+
+
+
