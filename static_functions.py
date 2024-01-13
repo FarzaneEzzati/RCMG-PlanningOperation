@@ -5,32 +5,32 @@ import numpy as np
 
 # ======================= Functions to simplify the algorithm ==================
 def DictMin(Dict):
-    minim = min(Dict.values())
-    arg = 0
-    for key, value in zip(Dict.keys(), Dict.values()):
-        if value == minim:
-            arg = key
-            break
-    return arg, minim
+    min_key = min(Dict, key=Dict.get)
+    return min_key
 
 
 def XInt(x):
     # The output is a list of touples.
     # The first element in the touple shows row index and the second shows the column index of non-integer.
     non_integer = []
-    for l in x.keys():
-        for ii_d in x[l].keys():
-            if x[l][ii_d] != int(x[l][ii_d]):
-                non_integer.append([l, ii_d])
+    for key in x.keys():
+        if x[key] != int(x[key]):
+            non_integer.append(key)
     return non_integer
 
 
 def YInt(y):
     non_integer = []
-    for element in y.keys():
-        if y[element] != int(y[element]):
-            non_integer.append(element)
-    return non_integer
+    y_diff = {key: min(y[key]-0, 1-y[key]) for key in y.keys()}
+    min_diff = 1
+    selected_key = None
+    for key in y_diff.keys():
+        if y_diff[key] != int(y_diff[key]):
+            non_integer.append(key)
+            if y_diff[key] <= min_diff:
+                selected_key = key
+                min_diff = y_diff[key]
+    return non_integer, selected_key
 
 
 def IndexUp(dict):
@@ -45,25 +45,8 @@ def SparseRowCount(Dict):
 
 
 if __name__ == '__main__':
-    # DictMin
-    d = {1: 45, 2: 76, 3: -24}
-    key, value = DictMin(d)
-    if (key, value) == (3, -24.):
-        print('DictMin works properly.')
-
-    # XInt
-    e1 = {1: {(1, 1): 2.2, (1, 2): 5, (1, 3): 8},
-          2: {(1, 1): 4, (1, 2): 6.4, (1, 3): 9}}
-    output1 = XInt(e1)
-    if output1 == [[1, (1, 1)], [2, (1, 2)]]:
-        print('XInt works properly.')
-
-    # IndexUp
-    d = {(0, 0): 3, (0, 1): 8, (1, 2): 9}
-    if IndexUp(d) == {(1, 1): 3, (1, 2): 8, (2, 3): 9}:
-        print('IndexUp works properly')
-
-    # SparseRowCount
-    dd = {(0, 0): 3, (0, 1): 8, (1, 2): 9, (2, 0): 9}
-    if SparseRowCount(d) == 1:
-        print('SparseRowCount works properly')
+    # YInt
+    e1 = {1: 0.2, 2: 0.6, 3: 0}
+    keys, min = YInt(e1)
+    if (keys, min) == ([1, 2], 1):
+        print('YInt works properly.')

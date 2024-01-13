@@ -19,6 +19,6 @@ print(probs, scens)
 model = gp.Model()
 x = model.addVars((1, 2, 3), lb=0, ub=4)
 model.addConstr(x[1] + 2*x[2] - x[3] <= 6)
+model.getVars()
 model.setObjective(x[1]+x[2]+2*x[3], sense=GRB.MAXIMIZE)
-model.update()
-print(model.getA().todok())
+model.cb

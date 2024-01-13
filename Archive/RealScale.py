@@ -11,16 +11,16 @@ env.setParam('OutputFlag', 1)
 
 def geneCases(consumer):
     # Each element represents the scenarios for a month (1, ..., 12)
-    with open('Data/OutageScenarios.pkl', 'rb') as handle:
+    with open('../Data/OutageScenarios.pkl', 'rb') as handle:
         scens, probs = pickle.load(handle)
     handle.close()
 
     # Load profile of households
-    lp1 = pd.read_csv('Data/Load_profile_1.csv')
-    lp2 = pd.read_csv('Data/Load_profile_2.csv')
+    lp1 = pd.read_csv('../Data/Load_profile_1.csv')
+    lp2 = pd.read_csv('../Data/Load_profile_2.csv')
 
     # PV output for one unit (4kW)
-    pv_profile = pd.read_csv('Data/PV_profiles.csv')
+    pv_profile = pd.read_csv('../Data/PV_profiles.csv')
     return scens, probs, [random.choice([lp1, lp2]) for _ in range(consumer)], pv_profile
 
 
