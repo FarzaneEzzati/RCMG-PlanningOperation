@@ -11,14 +11,7 @@ import gurobipy as gp
 from gurobipy import GRB
 
 
-with open('Data/OutageScenarios.pkl', 'rb') as handle:
-        scens, probs = pickle.load(handle)
+with open('Data/Sol.pkl', 'rb') as handle:
+        v = pickle.load(handle)
 handle.close()
-print(probs, scens)
-
-model = gp.Model()
-x = model.addVars((1, 2, 3), lb=0, ub=4)
-model.addConstr(x[1] + 2*x[2] - x[3] <= 6)
-model.getVars()
-model.setObjective(x[1]+x[2]+2*x[3], sense=GRB.MAXIMIZE)
-model.cb
+print(v[:17])

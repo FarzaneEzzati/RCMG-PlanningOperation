@@ -25,12 +25,12 @@ def geneCases(consumer):
 
 
 # Counts
-T = 10    # count of hours per week
-LCount = 1      # count of locations
+T = 168    # count of hours per week
+LCount = 5     # count of locations
 DVCCount = 3    # count of devices
-MCount = 1   # count of months
-HCount = 1     # count of households
-OutageStart = 1  # hour that outage starts
+MCount = 12   # count of months
+HCount = 1    # count of households
+OutageStart = 16  # hour that outage starts
 
 # Import data
 Scens, Probs, Load, PV_Unit = geneCases(consumer=HCount)
@@ -57,8 +57,8 @@ PA_Factor = (Interest_Rate * (1 + Interest_Rate) ** Years) / ((1 + Interest_Rate
 C = {1: 260, 2: 244, 3: 50}  # order is: [ES, PV, DG]
 CO = {i: C[i] * (PA_Factor + Operational_Rate) for i in (1, 2, 3)}
 
-UB1 = {1: 100.1, 2: 100.1, 3: 60.1}
-LB1 = {1: 1, 2: 1, 3: 1}
+UB1 = {1: 100, 2: 100, 3: 60}
+LB1 = {1: 10, 2: 10, 3: 0}
 UB2 = {1: 50.1, 2: 40.1, 3: 30.1}
 LB2 = {1: 0, 2: 0, 3: 0}
 
@@ -213,7 +213,7 @@ class SubProb:
         '''Specify Load Demand, PV, Outage Duration for the scenario s'''
         if True:
             # Define the load profiles and PV profiles
-            L = {(ii, h, t, g): 10 * Load[h - 1][f'Month {g}'].iloc[t - 1]
+            L = {(ii, h, t, g): 20 * Load[h - 1][f'Month {g}'].iloc[t - 1]
                   for ii in RNGSta for h in RNGHouse for t in RNGTime for g in RNGMonth}
 
             PV = {(t, g): PV_Unit[f'Month {g}'].iloc[t - 1]
@@ -562,10 +562,10 @@ class DetModel:
         X = {}
         for l in RNGLoc:
             for d in RNGDvc:
-                X[(1, l, d)] = self.real.addVar(lb=LB1[d], ub=UB1[d], name=f'X[1,{l},{d}]')
+                X[(1, l, d)] = self.real.addVar(vtype=GRB.INTEGER, lb=LB1[d], ub=UB1[d], name=f'X[1,{l},{d}]')
         for l in RNGLoc:
             for d in RNGDvc:
-                X[(2, l, d)] = self.real.addVar(lb=LB2[d], ub=UB2[d], name=f'X[2,{l},{d}]')
+                X[(2, l, d)] = self.real.addVar(vtype=GRB.INTEGER, lb=LB2[d], ub=UB2[d], name=f'X[2,{l},{d}]')
 
         Capital = 0
         for l in RNGLoc:
@@ -602,7 +602,7 @@ class DetModel:
             # Define the load profiles and PV profiles
             # Define the load profiles and PV profiles
             # Define the load profiles and PV profiles
-            L = {(ii, h, t, g, s): 10 * Load[h - 1][f'Month {g}'].iloc[t - 1]
+            L = {(ii, h, t, g, s): 20 * Load[h - 1][f'Month {g}'].iloc[t - 1]
                   for ii in RNGSta for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen}
 
             PV = {(t, g, s): PV_Unit[f'Month {g}'].iloc[t - 1]
@@ -723,15 +723,16 @@ class DetModel:
         '''Save model data'''
         if True:
             self.real.write(f'Models/real.mps')
+            print(self.real)
 
 
 if __name__ == '__main__':
-    mp = MasterPro()
+    '''mp = MasterPro()
     sp1 = SubProb(1)
     sp2 = SubProb(2)
     with open(f'Models/Indices.pkl', 'wb') as f:
         pickle.dump([mp.X_keys, mp.X_indcies, sp1.Y_keys, sp1.int_var_keys], f)
-    f.close()
+    f.close()'''
     real = DetModel()
 
 
