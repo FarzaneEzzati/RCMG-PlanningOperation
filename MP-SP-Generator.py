@@ -11,29 +11,28 @@ env.setParam('OutputFlag', 0)
 
 
 
-def geneCases(consumer):
+def geneCases():
     # Each element represents the scenarios for a month (1, ..., 12)
     with open('Data/OutageScenarios.pkl', 'rb') as handle:
         scens, probs = pickle.load(handle)
     handle.close()
     # Load profile of households
-    lp1 = pd.read_csv('Data/Load_profile_1.csv')
-    lp2 = pd.read_csv('Data/Load_profile_2.csv')
+    lp = pd.read_csv('Data/Load_profile_1.csv')
     # PV output for one unit (4kW)
     pv_profile = pd.read_csv('Data/PV_profiles.csv')
-    return scens, probs, [random.choice([lp1, lp2]) for _ in range(consumer)], pv_profile
+    return scens, probs, [lp], pv_profile
 
 
 # Counts
-T = 168    # count of hours per week
-LCount = 5     # count of locations
+T = 8    # count of hours per week
+LCount = 1     # count of locations
 DVCCount = 3    # count of devices
-MCount = 12   # count of months
+MCount = 1   # count of months
 HCount = 1    # count of households
-OutageStart = 16  # hour that outage starts
+OutageStart = 1  # hour that outage starts
 
 # Import data
-Scens, Probs, Load, PV_Unit = geneCases(consumer=HCount)
+Scens, Probs, Load, PV_Unit = geneCases()
 
 # Ranges
 RNGLoc = range(1, LCount + 1)
@@ -54,11 +53,11 @@ Years = 20
 Interest_Rate = 0.08
 Operational_Rate = 0.01
 PA_Factor = (Interest_Rate * (1 + Interest_Rate) ** Years) / ((1 + Interest_Rate) ** Years - 1)
-C = {1: 260, 2: 244, 3: 50}  # order is: [ES, PV, DG]
+C = {1: 110, 2: 110, 3: 20}  # order is: [ES, PV, DG]
 CO = {i: C[i] * (PA_Factor + Operational_Rate) for i in (1, 2, 3)}
 
-UB1 = {1: 100, 2: 100, 3: 60}
-LB1 = {1: 10, 2: 10, 3: 0}
+UB1 = {1: 200.6, 2: 200.8, 3: 100}
+LB1 = {1: 10, 2: 10, 3: 2}
 UB2 = {1: 50.1, 2: 40.1, 3: 30.1}
 LB2 = {1: 0, 2: 0, 3: 0}
 
@@ -69,7 +68,7 @@ GridMinus = alpha * GridPlus
 GenerPrice = beta * GridPlus
 LoadPrice = zeta * GridPlus
 
-VoLL = {h: 1.5 * GridPlus for h in RNGHouse}
+VoLL = {h: 2.5 * GridPlus for h in RNGHouse}
 TransMax = 0.3  # %
 TransPrice = TransMax * np.mean([VoLL[key] for key in VoLL.keys()])
 
@@ -110,7 +109,7 @@ with open('Data/Ranges.pkl', 'wb') as handle:
     pickle.dump([RNGLoc, RNGDvc, RNGTime, RNGMonth, RNGHouse, RNGScen, RNGSta, Y_itg, Y_ihtg, Y_ittg], handle)
 handle.close()
 
-eta_M = -1000000
+eta_M = -10000000
 
 
 class MasterPro:
@@ -126,16 +125,17 @@ class MasterPro:
                 X[(2, l, d)] = self.master.addVar(lb=LB2[d], ub=UB2[d], name=f'X[2,{l},{d}]')
         self.X_keys = range(1, LCount * (2 * DVCCount) + 1)  # starts from 1
         self.X_indcies = X_ild
-        Capital = 0
-        for l in RNGLoc:
-            # Investment constraint
-            self.master.addConstr(quicksum(X[(1, l, d)] * C[d] for d in RNGDvc) <= Budget1, name='IB')
-            # ReInvestment constraint
-            self.master.addConstr(quicksum(X[(2, l, d)] * C[d] for d in RNGDvc) <= Budget2, name='RIB')
 
-            # Formulate capital cost
-            Capital += quicksum((X[(1, l, d)] + X[(2, l, d)]) * CO[d] for d in RNGDvc)
 
+        # Investment constraint
+        self.master.addConstrs(-quicksum(X[(1, l, d)] * C[d] for d in RNGDvc) >= -Budget1 for l in RNGLoc)
+        # ReInvestment constraint
+        self.master.addConstrs(-quicksum(X[(2, l, d)] * C[d] for d in RNGDvc) >= -Budget2 for l in RNGLoc)
+        # Capacity limit
+        self.master.addConstrs(-quicksum(X[(1, l, d)] for l in RNGLoc) >= -UB1[d] for d in RNGDvc)
+        self.master.addConstrs(-quicksum(X[(2, l, d)] for l in RNGLoc) >= -UB2[d] for d in RNGDvc)
+        self.master.addConstrs(quicksum(X[(1, l, d)] for l in RNGLoc) >= LB1[d] for d in RNGDvc)
+        self.master.addConstrs(quicksum(X[(2, l, d)] for l in RNGLoc) >= LB2[d] for d in RNGDvc)
 
         # Get A and b to save it
         self.master.update()
@@ -152,6 +152,9 @@ class MasterPro:
                 upper_bounds[X[ild].index+1] = UB2[ild[2]]
                 lower_bounds[X[ild].index+1] = LB2[ild[2]]
         eta = self.master.addVar(lb=eta_M, name='eta')
+        Capital = 0
+        for l in RNGLoc:
+            Capital += quicksum((X[(1, l, d)] + X[(2, l, d)]) * CO[d] for d in RNGDvc)
         self.master.setObjective(Capital + eta, sense=GRB.MINIMIZE)
 
         # Save master in mps + save data in pickle
@@ -213,10 +216,10 @@ class SubProb:
         '''Specify Load Demand, PV, Outage Duration for the scenario s'''
         if True:
             # Define the load profiles and PV profiles
-            L = {(ii, h, t, g): 20 * Load[h - 1][f'Month {g}'].iloc[t - 1]
+            L = {(ii, h, t, g):  (1 + 0.05 * scen) * 12 * 10 * Load[h - 1][f'Month {g}'].iloc[t - 1]
                   for ii in RNGSta for h in RNGHouse for t in RNGTime for g in RNGMonth}
 
-            PV = {(t, g): PV_Unit[f'Month {g}'].iloc[t - 1]
+            PV = {(t, g): (0.5 + 0.05 * scen) * PV_Unit[f'Month {g}'].iloc[t - 1]
                   for t in RNGTime for g in RNGMonth}
 
             Out_Time = {g: 0 for g in RNGMonth}
@@ -519,7 +522,7 @@ class SubProb:
 
                         Costs += GridPlus * Y_GridES[(ii, t, g)] - \
                                 GridMinus * (Y_PVGrid[(ii, t, g)] + Y_ESGrid[(ii, t, g)] + Y_DGGrid[(ii, t, g)]) - \
-                                GenerPrice * quicksum(x_fixed[(1, l, 2)] for l in RNGLoc) * PV[(t, g)] - \
+                                GenerPrice * quicksum(x_fixed[(ii, l, 2)] for l in RNGLoc) * PV[(t, g)] - \
                                 LoadPrice * (Y_ESL[(ii, t, g)] + Y_DGL[(ii, t, g)] + Y_PVL[(ii, t, g)])
 
                         # DRP cost
@@ -602,10 +605,10 @@ class DetModel:
             # Define the load profiles and PV profiles
             # Define the load profiles and PV profiles
             # Define the load profiles and PV profiles
-            L = {(ii, h, t, g, s): 20 * Load[h - 1][f'Month {g}'].iloc[t - 1]
+            L = {(ii, h, t, g, s): (1 + 0.05 * s) * 20 * Load[h - 1][f'Month {g}'].iloc[t - 1]
                   for ii in RNGSta for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen}
 
-            PV = {(t, g, s): PV_Unit[f'Month {g}'].iloc[t - 1]
+            PV = {(t, g, s): (1 + 0.05 * s) * PV_Unit[f'Month {g}'].iloc[t - 1]
                   for t in RNGTime for g in RNGMonth for s in RNGScen}
             Out_Time = {(g, s): 0 for s in RNGScen for g in RNGMonth}
             for s in RNGScen:
@@ -727,13 +730,13 @@ class DetModel:
 
 
 if __name__ == '__main__':
-    '''mp = MasterPro()
+    mp = MasterPro()
     sp1 = SubProb(1)
     sp2 = SubProb(2)
     with open(f'Models/Indices.pkl', 'wb') as f:
-        pickle.dump([mp.X_keys, mp.X_indcies, sp1.Y_keys, sp1.int_var_keys], f)
-    f.close()'''
-    real = DetModel()
+        pickle.dump([mp.X_keys, sp1.Y_keys, sp1.int_var_keys], f)
+    f.close()
+    # real = DetModel()
 
 
 

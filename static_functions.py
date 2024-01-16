@@ -21,17 +21,20 @@ def XInt(x):
 
 def YInt(y):
     non_integer = []
-    y_diff = {key: min(y[key]-0, 1-y[key]) for key in y.keys()}
+    for key in y.keys():
+        if y[key] != int(y[key]):
+            non_integer.append(key)
+    return non_integer
+
+def SelectSplitKey(y, non_int):
+    y_diff = {key: min(y[key] - 0, 1 - y[key]) for key in y.keys()}
     min_diff = 1
     selected_key = None
-    for key in y_diff.keys():
-        if y_diff[key] != int(y_diff[key]):
-            non_integer.append(key)
-            if y_diff[key] <= min_diff:
-                selected_key = key
-                min_diff = y_diff[key]
-    return non_integer, selected_key
-
+    for key in non_int:
+        if y[key] < min_diff:
+            selected_key = key
+            min_diff = y[key]
+    return selected_key
 
 def IndexUp(dict):
     new_dict = {}
