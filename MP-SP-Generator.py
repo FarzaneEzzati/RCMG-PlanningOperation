@@ -24,12 +24,12 @@ def geneCases():
 
 
 # Counts
-T = 8    # count of hours per week
-LCount = 1     # count of locations
+T = 168    # count of hours per week
+LCount = 3     # count of locations
 DVCCount = 3    # count of devices
-MCount = 1   # count of months
+MCount = 12   # count of months
 HCount = 1    # count of households
-OutageStart = 1  # hour that outage starts
+OutageStart = 16  # hour that outage starts
 
 # Import data
 Scens, Probs, Load, PV_Unit = geneCases()
@@ -53,10 +53,10 @@ Years = 20
 Interest_Rate = 0.08
 Operational_Rate = 0.01
 PA_Factor = (Interest_Rate * (1 + Interest_Rate) ** Years) / ((1 + Interest_Rate) ** Years - 1)
-C = {1: 110, 2: 110, 3: 20}  # order is: [ES, PV, DG]
+C = {1: 110, 2: 100, 3: 20}  # order is: [ES, PV, DG]
 CO = {i: C[i] * (PA_Factor + Operational_Rate) for i in (1, 2, 3)}
 
-UB1 = {1: 200.6, 2: 200.8, 3: 100}
+UB1 = {1: 10000, 2: 10000.8, 3: 4000}
 LB1 = {1: 10, 2: 10, 3: 2}
 UB2 = {1: 50.1, 2: 40.1, 3: 30.1}
 LB2 = {1: 0, 2: 0, 3: 0}
@@ -219,8 +219,7 @@ class SubProb:
             L = {(ii, h, t, g):  (1 + 0.05 * scen) * 12 * 10 * Load[h - 1][f'Month {g}'].iloc[t - 1]
                   for ii in RNGSta for h in RNGHouse for t in RNGTime for g in RNGMonth}
 
-            PV = {(t, g): (0.5 + 0.05 * scen) * PV_Unit[f'Month {g}'].iloc[t - 1]
-                  for t in RNGTime for g in RNGMonth}
+            PV = {(t, g): (0.5 + 0.05 * scen) * PV_Unit[f'Month {g}'].iloc[t - 1] for t in RNGTime for g in RNGMonth}
 
             Out_Time = {g: 0 for g in RNGMonth}
             if Scens[scen] != 0:
@@ -230,278 +229,265 @@ class SubProb:
         for ii in RNGSta:  # RNGSta = (1, 2)
             for g in RNGMonth:
                 # ES levels
-                self.sub.addConstr(Y_E[(ii, 1, g)] == SOC_UB * quicksum(x_fixed[(1, l, 1)] + (ii - 1) * x_fixed[(2, l, 1)] for l in RNGLoc))
+                self.sub.addConstr(Y_E[(ii, 1, g)] == SOC_LB * quicksum(x_fixed[(1, l, 1)] + (ii - 1) * x_fixed[(2, l, 1)] for l in RNGLoc), name='t1')
                 # Only use the summation of ES capacity before/after reinvestment for rhs update in ABC BB-D
 
                 for t in RNGTime:
                     # Limits on energy level in ES
-                    self.sub.addConstr(Y_E[(ii, t, g)] >= SOC_LB * quicksum(x_fixed[(1, l, 1)] + (ii - 1) * x_fixed[(2, l, 1)] for l in RNGLoc))
+                    self.sub.addConstr(Y_E[(ii, t, g)] >= SOC_LB * quicksum(x_fixed[(1, l, 1)] + (ii - 1) * x_fixed[(2, l, 1)] for l in RNGLoc), name='E_LB')
 
 
-                    self.sub.addConstr(-Y_E[(ii, t, g)] >= -SOC_UB * quicksum(x_fixed[(1, l, 1)] + (ii - 1) * x_fixed[(2, l, 1)] for l in RNGLoc))
+                    self.sub.addConstr(-Y_E[(ii, t, g)] >= -SOC_UB * quicksum(x_fixed[(1, l, 1)] + (ii - 1) * x_fixed[(2, l, 1)] for l in RNGLoc), name='E_UB')
 
                     # PV power decomposition
                     self.sub.addConstr((Y_PVL[(ii, t, g)] + Y_PVES[(ii, t, g)] +
                                         Y_PVCur[(ii, t, g)] + Y_PVGrid[(ii, t, g)]) ==
-                                        PV[(t, g)] * quicksum(x_fixed[(1, l, 2)] + (ii - 1) * x_fixed[(2, l, 2)] for l in RNGLoc))
+                                        PV[(t, g)] * quicksum(x_fixed[(1, l, 2)] + (ii - 1) * x_fixed[(2, l, 2)] for l in RNGLoc), name='PV')
 
                     # DG power decomposition
                     self.sub.addConstr(Y_DGL[(ii, t, g)] + Y_DGES[(ii, t, g)] +
                                     Y_DGGrid[(ii, t, g)] + Y_DGCur[(ii, t, g)] ==
-                                    quicksum(x_fixed[(1, l, 3)] + (ii - 1) * x_fixed[(2, l, 3)] for l in RNGLoc))
+                                    quicksum(x_fixed[(1, l, 3)] + (ii - 1) * x_fixed[(2, l, 3)] for l in RNGLoc), name='DG')
 
 
                     # Assigned load decomposition
                     self.sub.addConstr(quicksum(Y_LH[(ii, h, t, g)] for h in RNGHouse) ==
                                     Eta_i * (Y_ESL[(ii, t, g)] + Y_DGL[(ii, t, g)] + Y_PVL[(ii, t, g)]) +
-                                    Y_GridL[(ii, t, g)], name='')
+                                    Y_GridL[(ii, t, g)], name='LoadH')
 
                     for h in RNGHouse:
                         # Load decomposition
                         self.sub.addConstr(Y_LH[(ii, h, t, g)] + Y_LL[(ii, h, t, g)] +
                                         quicksum(Y_LT[(ii, t, to, g)] for to in range(t, T + 1)) ==
-                                        L[(ii, h, t, g)], name='')
+                                        L[(ii, h, t, g)], name='LoadD')
 
                     if t in DontTran:
                         # Don't allow transfer
-                        self.sub.addConstrs(Y_LT[(ii, t, to, g)] == 0 for to in range(t, T + 1))
+                        self.sub.addConstrs((Y_LT[(ii, t, to, g)] == 0 for to in range(t, T + 1)), name='NoTrans')
                     else:
                         # Max load transfer
                         self.sub.addConstr(TransMax * np.sum([L[(ii, h, t, g)] for h in RNGHouse]) -
-                                           quicksum(Y_LT[(ii, t, to, g)] for to in range(t, T + 1)) >= 0, name='')
+                                           quicksum(Y_LT[(ii, t, to, g)] for to in range(t, T + 1)) >= 0, name='MaxLoadTrans')
 
                     # Load transfer and E level
-                    self.sub.addConstr(Y_E[(ii, t, g)] - quicksum(Y_LT[(ii, to, t, g)] for to in range(1, t)) >= 0,  name='')
+                    self.sub.addConstr(Y_E[(ii, t, g)] - quicksum(Y_LT[(ii, to, t, g)] for to in range(1, t)) >= 0,  name='ES Load limit')
 
                     # Prohibited transfer to self
-                    self.sub.addConstr(Y_LT[(ii, t, t, g)] == 0, name='')
+                    self.sub.addConstr(Y_LT[(ii, t, t, g)] == 0, name='TransIt')
 
                     # ES charging/discharging constraints
                     self.sub.addConstr((UB1[1] + (ii - 1) * UB2[1]) * U_E[(ii, t, g)] -
-                                       (Y_ESL[(ii, t, g)] + Y_ESGrid[(ii, t, g)]) >= 0, name='')
+                                       (Y_ESL[(ii, t, g)] + Y_ESGrid[(ii, t, g)]) >= 0, name='Discharge')
                     self.sub.addConstr((UB1[1] + (ii - 1) * UB2[1]) * (1 - U_E[(ii, t, g)]) -
-                                       (Y_PVES[(ii, t, g)] + Y_GridES[(ii, t, g)] + Y_DGES[(ii, t, g)]) >= 0, name='')
+                                       (Y_PVES[(ii, t, g)] + Y_GridES[(ii, t, g)] + Y_DGES[(ii, t, g)]) >= 0, name='Charge')
 
                     self.sub.addConstr((UB1[1] + UB1[2] + UB1[3] + (ii - 1) * (UB2[1] + UB2[2] + UB2[3])) * U_G[(ii, t, g)] -
                                        (Y_ESGrid[(ii, t, g)] + Y_PVGrid[(ii, t, g)] + Y_DGGrid[(ii, t, g)]) >= 0,
-                                       name='')
+                                       name='Grid+')
                     self.sub.addConstr((UB1[1] + UB1[2] + UB1[3] + (ii - 1) * (UB2[1] + UB2[2] + UB2[3])) * (1 - U_G[(ii, t, g)]) -
-                                       (Y_GridES[(ii, t, g)] + Y_GridL[(ii, t, g)]) >= 0, name='')
+                                       (Y_GridES[(ii, t, g)] + Y_GridL[(ii, t, g)]) >= 0, name='Grid-')
 
                     # Prohibited transaction with the grid during outage
                     if Out_Time[g] != 0:
                         for ot in Out_Time[g]:
                             self.sub.addConstr(Y_GridL[(ii, ot, g)] + Y_GridES[(ii, ot, g)] == 0, name='')
                             self.sub.addConstr(Y_PVGrid[(ii, ot, g)] + Y_ESGrid[(ii, ot, g)] +
-                                            Y_DGGrid[(ii, ot, g)] == 0, name='')
+                                            Y_DGGrid[(ii, ot, g)] == 0, name='Outage')
 
                 for t in RNGTimeMinus:
                     # Balance of power flow
                     self.sub.addConstr(Y_E[(ii, t + 1, g)] ==
                                        Y_E[(ii, t, g)] +
                                         ES_gamma * (Y_PVES[(ii, t, g)] + Y_DGES[(ii, t, g)] + Eta_c * Y_GridES[(ii, t, g)]) -
-                                        (Eta_i / ES_gamma) * (Y_ESL[(ii, t, g)] + Y_ESGrid[(ii, t, g)]), name='')
+                                        (Eta_i / ES_gamma) * (Y_ESL[(ii, t, g)] + Y_ESGrid[(ii, t, g)]), name='Balance')
         '''Saving Bounds'''
         if True:
             '''Upper bounds'''
-            Binary_U_bound = {itg: 1 for itg in Y_itg}
-            ES_U_bound = {itg: UB1[1] + (itg[0] - 1) * UB2[1] for itg in Y_itg}
-            PV_U_bound = {itg: UB1[2] + (itg[0] - 1) * UB2[2] for itg in Y_itg}
-            DG_U_bound = {itg: UB1[3] + (itg[0] - 1) * UB2[3] for itg in Y_itg}
-            L_total_U_bound = {itg: sum(L[(itg[0], h, itg[1], itg[2])] for h in RNGHouse) for itg in Y_itg}
-            L_U_bound = {ihtg: L[ihtg] for ihtg in Y_ihtg}
-            L_t_U_bound = {ittg: sum(L[(ittg[0], h, ittg[1], ittg[3])] for h in RNGHouse) for ittg in Y_ittg}
+            Binary_U_bound = [1 for _ in Y_itg]
+            ES_U_bound = [UB1[1] + (itg[0] - 1) * UB2[1] for itg in Y_itg]
+            PV_U_bound = [UB1[2] + (itg[0] - 1) * UB2[2] for itg in Y_itg]
+            DG_U_bound = [UB1[3] + (itg[0] - 1) * UB2[3] for itg in Y_itg]
+            L_total_U_bound = [sum(L[(itg[0], h, itg[1], itg[2])] for h in RNGHouse) for itg in Y_itg]
+            L_U_bound = [L[ihtg] for ihtg in Y_ihtg]
+            L_t_U_bound = [sum(L[(ittg[0], h, ittg[1], ittg[3])] for h in RNGHouse) for ittg in Y_ittg]
             upper_bounds = {}
+
             last_key = self.X_keys[-1]
             # U_E
-            for value in Binary_U_bound.values():
+            for value in Binary_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
 
             # U_G
-            for value in Binary_U_bound.values():
+            for value in Binary_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # Y_PVES
-            for value in PV_U_bound.values():
+            for value in PV_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # Y_DGES
-            for value in DG_U_bound.values():
+            for value in DG_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # Y_GridES
-            for value in ES_U_bound.values():
+            for value in ES_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # Y_PVL
-            for value in PV_U_bound.values():
+            for value in PV_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # Y_DGL
-            for value in DG_U_bound.values():
+            for value in DG_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # Y_ESL
-            for value in ES_U_bound.values():
+            for value in ES_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # Y_GridL
-            for value in L_total_U_bound.values():
+            for value in L_total_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # Y_PVCur
-            for value in PV_U_bound.values():
+            for value in PV_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # Y_DGCur
-            for value in DG_U_bound.values():
+            for value in DG_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # Y_PVGrid
-            for value in PV_U_bound.values():
+            for value in PV_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # Y_DGGrid
-            for value in DG_U_bound.values():
+            for value in DG_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # Y_ESGrid
-            for value in ES_U_bound.values():
+            for value in ES_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # E
-            for value in ES_U_bound.values():
+            for value in ES_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # Y_LH
-            for value in L_U_bound.values():
+            for value in L_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
 
             # Y_LL
-            for value in L_U_bound.values():
+            for value in L_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # Y_LT
-            for value in L_t_U_bound.values():
+            for value in L_t_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
+            print(upper_bounds[46])
             '''End of upper bounds'''
 
             '''Lower bounds'''
-            Binary_L_bound = {itg: 0 for itg in Y_itg}
-            ES_L_bound = {itg: 0 for itg in Y_itg}
-            PV_L_bound = {itg: 0 for itg in Y_itg}
-            DG_L_bound = {itg: 0 for itg in Y_itg}
-            L_total_L_bound = {itg: 0 for itg in Y_itg}
-            L_L_bound = {ihtg: 0 for ihtg in Y_ihtg}
-            L_t_L_bound = {ittg: 0 for ittg in Y_ittg}
+            Binary_L_bound = [0 for _ in Y_itg]
+            ES_L_bound = [0 for _ in Y_itg]
+            PV_L_bound = [0 for _ in Y_itg]
+            DG_L_bound = [0 for _ in Y_itg]
+            L_total_L_bound = [0 for _ in Y_itg]
+            L_L_bound = [0 for _ in Y_ihtg]
+            L_t_L_bound = [0 for _ in Y_ittg]
 
             lower_bounds = {}
             last_key = self.X_keys[-1]
             # U_E
-            for value in Binary_L_bound.values():
+            for value in Binary_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # U_G
-            for value in Binary_L_bound.values():
+            for value in Binary_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # Y_PVES
-            for value in PV_L_bound.values():
+            for value in PV_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # Y_DGES
-            for value in DG_L_bound.values():
+            for value in DG_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # Y_GridES
-            for value in ES_L_bound.values():
+            for value in ES_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # Y_PVL
-            for value in PV_L_bound.values():
+            for value in PV_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # Y_DGL
-            for value in DG_L_bound.values():
+            for value in DG_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # Y_ESL
-            for value in ES_L_bound.values():
+            for value in ES_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # Y_GridL
-            for value in L_total_L_bound.values():
+            for value in L_total_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # Y_PVCur
-            for value in PV_L_bound.values():
+            for value in PV_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # Y_DGCur
-            for value in DG_L_bound.values():
+            for value in DG_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # Y_PVGrid
-            for value in PV_L_bound.values():
+            for value in PV_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # Y_DGGrid
-            for value in DG_L_bound.values():
+            for value in DG_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # Y_ESGrid
-            for value in ES_L_bound.values():
+            for value in ES_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # E
-            for value in ES_L_bound.values():
+            for value in ES_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # Y_LH
-            for value in L_L_bound.values():
+            for value in L_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # Y_LL
-            for value in L_L_bound.values():
+            for value in L_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
 
             # Y_LT
-            for value in L_t_L_bound.values():
+            for value in L_t_L_bound:
                 last_key += 1
                 lower_bounds[last_key] = value
             '''End of lower bounds'''
@@ -528,7 +514,7 @@ class SubProb:
                         # DRP cost
                         Costs += TransPrice * quicksum(Y_LT[(ii, to, t, g)] for to in RNGTime)
 
-            total_cost = Probs[scen] * GenPar * Costs
+            total_cost = GenPar * Costs
             self.sub.setObjective(total_cost, sense=GRB.MINIMIZE)
             self.sub.update()
             '''Get T, W, r and save it'''
@@ -731,10 +717,10 @@ class DetModel:
 
 if __name__ == '__main__':
     mp = MasterPro()
-    sp1 = SubProb(1)
-    sp2 = SubProb(2)
+    for scen in Probs.keys():
+        sp = SubProb(scen)
     with open(f'Models/Indices.pkl', 'wb') as f:
-        pickle.dump([mp.X_keys, sp1.Y_keys, sp1.int_var_keys], f)
+        pickle.dump([mp.X_keys, sp.Y_keys, sp.int_var_keys], f)
     f.close()
     # real = DetModel()
 
