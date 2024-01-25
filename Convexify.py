@@ -3,10 +3,16 @@ from static_functions import *
 import matplotlib.pyplot as plt
 import gurobipy as gp
 from gurobipy import quicksum, GRB
-from Classes import *
+
+from MasterSub import SubProb, MasterProb
+import time
 env = gp.Env()
 env.setParam('OutputFlag', 0)
 
+
+with open(f'Models/Indices.pkl', 'rb') as f:
+    X_keys, Y_keys, Y_int_keys = pickle.load(f)
+f.close()
 D = 2
 
 
@@ -14,6 +20,7 @@ def Convexify(master, sub, x_k, Gz, gz):
     A_1, b_1, ub_1, lb_1 = master.ReturnA_b_ub_lb()
     y_d, v_d, bt_d, ut_d, lt_d = sub.SolveForBenders(x_k)  # bt = BigTheta, ut = UpperTheta, lt = LowerTheta
     if not YInt({y_key: y_d[y_key] for y_key in Y_int_keys}):
+        print('Done')
         return y_d, v_d, bt_d, ut_d, lt_d, Gz, gz
     else:
         '''BB'''
@@ -23,31 +30,46 @@ def Convexify(master, sub, x_k, Gz, gz):
         TI2_v = {0: v_d}  # Dictionary saving nodes that are candidates for splitting
         tt_last, d = 0, 1
         while (len(T2) < D, len(TI2_v) != 0) == (True, True):
+            
             tt_bar = min(TI2_v, key=TI2_v.get)
             ytc = {y_key: T2_y[tt_bar][y_key] for y_key in Y_int_keys}
             ynin = YInt(ytc)
-            ysk = SelectSplitKey(ytc, ynin)
-            if ysk is None:
+            if len(ynin) == 0:
                 del TI2_v[tt_bar]
             else:
-                for split_sense in ('u', 'l'):
-                    tt_last += 1
-                    node_2, T_2, W_2, r_2, ub_2, lb_2 = T2[tt_bar].ReturnModel()
-                    temp_split = SubProb(node_2, T_2, W_2, r_2, ub_2, lb_2)
-                    temp_split.AddSplit(ysk, split_sense)  # Add the split to the new node
-                    y2, v2 = temp_split.FixXSolve(x_k)
-                    if y2 is not None:
-                        T2[tt_last] = temp_split
-                        T2_y[tt_last], T2_v[tt_last] = y2, v2
-                        TI2_v[tt_last] = T2_v[tt_last]
-
-                if (tt_last in T2.keys(), tt_last-1 in T2.keys()) == (False, False):
-                    del TI2_v[tt_bar]
+                ysk = SelectSplitKey(ytc, ynin)
+                node_2, T_2, W_2, r_2, ub_2, lb_2 = T2[tt_bar].ReturnModel()
+                
+                tt_last += 1
+                T2[tt_last] = SubProb(node_2.copy(), copy.copy(T_2), copy.copy(W_2), copy.copy(r_2), copy.copy(ub_2), copy.copy(lb_2))
+                
+                T2[tt_last].AddSplit(ysk, 'u')  
+                y2, v2 = T2[tt_last].FixXSolve(x_k)
+                if y2 is not None:
+                    T2_y[tt_last], T2_v[tt_last] = y2, v2
+                    TI2_v[tt_last] = T2_v[tt_last]
                 else:
+                    print('infeasible y')
+                    del T2[tt_last]
+                
+                tt_last += 1
+                T2[tt_last] = SubProb(node_2.copy(), copy.copy(T_2), copy.copy(W_2), copy.copy(r_2), copy.copy(ub_2), copy.copy(lb_2))
+                T2[tt_last].AddSplit(ysk, 'l')  
+                y2, v2 = T2[tt_last].FixXSolve(x_k)
+                if y2 is not None:
+                    T2_y[tt_last], T2_v[tt_last] = y2, v2
+                    TI2_v[tt_last] = T2_v[tt_last]
+                else:
+                    print('infeasible y')
+                    del T2[tt_last]  
+                
+                if (tt_last in T2.keys(), tt_last - 1 in T2.keys()) != (False, False):
                     del T2[tt_bar]
-                    del T2_v[tt_bar]
                     del T2_y[tt_bar]
+                    del T2_v[tt_bar]
                     del TI2_v[tt_bar]
+        print(T2_y)
+
         '''CGLP'''
         ub_2 = {t2: T2[t2].ub for t2 in T2.keys()}
         lb_2 = {t2: T2[t2].lb for t2 in T2.keys()}
@@ -66,6 +88,7 @@ def Convexify(master, sub, x_k, Gz, gz):
         PI1 = cglp.addVars(X_keys, lb=-1, ub=1, name='p1')
         PI2 = cglp.addVars(Y_keys, lb=-1, ub=1, name='p2')
         cglp.update()
+        print('Cut', end=' ')
 
         while True:
             T_k, W_k, r_k = sub.ReturnT_W_r()
@@ -116,11 +139,10 @@ def Convexify(master, sub, x_k, Gz, gz):
             PI0_value = PI0.x
 
             sub.AddCut(PI0_value, PI1_values, PI2_values)
-            # print(sum(PI1_values[x_key] * x_k[x_key] for x_key in X_keys)+sum(PI2_values[y_key] * y_d[y_key] for y_key in Y_keys) >= PI0_value)
             y_d, v_d, bt_d, ut_d, lt_d = sub.SolveForBenders(x_k)
             gz += 1
             Gz.append(gz)
-            # print(v_d, end=' ')
+            print(f'{gz}', end=' ')
             for t2 in T2.keys():
                 y_in_union = True
                 for int_key in Y_int_keys:
@@ -134,4 +156,3 @@ def Convexify(master, sub, x_k, Gz, gz):
             cglp.remove(L2)
             cglp.remove(cglp.getConstrs())
             cglp.update()
-            break

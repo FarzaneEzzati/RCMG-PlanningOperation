@@ -24,12 +24,12 @@ def geneCases():
 
 
 # Counts
-T = 168    # count of hours per week
+T = 4    # count of hours per week
 LCount = 3     # count of locations
 DVCCount = 3    # count of devices
-MCount = 12   # count of months
+MCount = 1   # count of months
 HCount = 1    # count of households
-OutageStart = 16  # hour that outage starts
+OutageStart = 1  # hour that outage starts
 
 # Import data
 Scens, Probs, Load, PV_Unit = geneCases()
@@ -187,8 +187,8 @@ class SubProb:
             self.X_keys = range(1, LCount * (2 * DVCCount) + 1)  # starts from 1
         '''Scheduling variables'''
         if True:
-            U_E = self.sub.addVars(Y_itg, ub=1, name=f'U_E')  # Charge/discharge binary
-            U_G = self.sub.addVars(Y_itg, ub=1, name=f'U_G')  # Import/export binary
+            U_E = self.sub.addVars(Y_itg, lb=0, ub=1, name=f'U_E')  # Charge/discharge binary
+            U_G = self.sub.addVars(Y_itg, lb=0, ub=1, name=f'U_G')  # Import/export binary
             Y_PVES = self.sub.addVars(Y_itg, name=f'Y_PVES')  # PV to ES (1 before reinvestment, 2 after)
             Y_DGES = self.sub.addVars(Y_itg, name=f'Y_DGES')  # DE to ES
             Y_GridES = self.sub.addVars(Y_itg, name=f'Y_GridES')   # Grid to ES
@@ -281,10 +281,10 @@ class SubProb:
                     self.sub.addConstr((UB1[1] + (ii - 1) * UB2[1]) * (1 - U_E[(ii, t, g)]) -
                                        (Y_PVES[(ii, t, g)] + Y_GridES[(ii, t, g)] + Y_DGES[(ii, t, g)]) >= 0, name='Charge')
 
-                    self.sub.addConstr((UB1[1] + UB1[2] + UB1[3] + (ii - 1) * (UB2[1] + UB2[2] + UB2[3])) * U_G[(ii, t, g)] -
+                    self.sub.addConstr(1000000 * U_G[(ii, t, g)] -
                                        (Y_ESGrid[(ii, t, g)] + Y_PVGrid[(ii, t, g)] + Y_DGGrid[(ii, t, g)]) >= 0,
                                        name='Grid+')
-                    self.sub.addConstr((UB1[1] + UB1[2] + UB1[3] + (ii - 1) * (UB2[1] + UB2[2] + UB2[3])) * (1 - U_G[(ii, t, g)]) -
+                    self.sub.addConstr(1000000 * (1 - U_G[(ii, t, g)]) -
                                        (Y_GridES[(ii, t, g)] + Y_GridL[(ii, t, g)]) >= 0, name='Grid-')
 
                     # Prohibited transaction with the grid during outage
@@ -294,7 +294,7 @@ class SubProb:
                             self.sub.addConstr(Y_PVGrid[(ii, ot, g)] + Y_ESGrid[(ii, ot, g)] +
                                             Y_DGGrid[(ii, ot, g)] == 0, name='Outage')
 
-                for t in RNGTimeMinus:
+                for t in range(1, T-1):
                     # Balance of power flow
                     self.sub.addConstr(Y_E[(ii, t + 1, g)] ==
                                        Y_E[(ii, t, g)] +
@@ -317,7 +317,6 @@ class SubProb:
             for value in Binary_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-
             # U_G
             for value in Binary_U_bound:
                 last_key += 1
@@ -387,7 +386,6 @@ class SubProb:
             for value in L_t_U_bound:
                 last_key += 1
                 upper_bounds[last_key] = value
-            print(upper_bounds[46])
             '''End of upper bounds'''
 
             '''Lower bounds'''
@@ -718,7 +716,10 @@ class DetModel:
 if __name__ == '__main__':
     mp = MasterPro()
     for scen in Probs.keys():
-        sp = SubProb(scen)
+        if scen < 3:
+            sp = SubProb(scen)
+        else:
+            break
     with open(f'Models/Indices.pkl', 'wb') as f:
         pickle.dump([mp.X_keys, sp.Y_keys, sp.int_var_keys], f)
     f.close()

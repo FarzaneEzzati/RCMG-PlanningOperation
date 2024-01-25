@@ -1,6 +1,18 @@
-from Classes import *
-from Convexify import *
-
+import pickle
+from MasterSub import MasterProb, SubProb, Probs
+from Convexify import Convexify
+import pickle
+import random
+import copy
+import pandas as pd
+import numpy as np
+from static_functions import DictMin, IndexUp, XInt, YInt
+import gurobipy as gp
+from gurobipy import quicksum, GRB
+import matplotlib.pyplot as plt
+env = gp.Env()
+env.setParam('OutputFlag', 0)
+env.setParam('DualReductions', 0)
 
 def OpenMasterFile():
     # Load the indices
@@ -23,7 +35,10 @@ def OpenSubFile(scen):
     sub_model = gp.read(f'Models/Sub{scen}.mps', env=env)
     return sub_model, T, W, r, upper_bounds, lower_bounds
 
-
+'''Define keys to be global parameters'''
+with open(f'Models/Indices.pkl', 'rb') as f:
+    X_keys, Y_keys, Y_int_keys = pickle.load(f)
+f.close()
 
 if __name__ == '__main__':
     m_model, m_A, m_b, m_ub, m_lb = OpenMasterFile()
@@ -46,7 +61,7 @@ if __name__ == '__main__':
     Gz = {0: {sp: [] for sp in Probs.keys()}}
     gz = 0
     epsilon = 0.1   # Stopping tolerance
-    while (k < 30, len(T1) > 0) == (True, True):
+    while (k < 2, len(T1) > 0) == (True, True):
         print(f'\n{10*">"} Iteration {k}')
         print(f'V: {V:0.2f} ====== v: {v:0.2f}')
         # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Branching Till Integer Found <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
@@ -64,8 +79,8 @@ if __name__ == '__main__':
             split_value = T1_x[t_bar][split_key]
             for sense in ('u', 'l'):
                 t_last += 1
-                temp_model, temp_A, temp_b, temp_ub, temp_lb = T1[t_bar].ReturnModel()
-                temp_node = MasterProb(temp_model, temp_A, temp_b, temp_ub, temp_lb)
+                node_1, A_1, b_1, ub_1, lb_1 = T1[t_bar].ReturnModel()
+                temp_node = MasterProb(node_1.copy(), copy.copy(A_1), copy.copy(b_1), copy.copy(ub_1), copy.copy(lb_1))
                 temp_node.AddSplit(split_key, split_value, sense)
                 temp_output = temp_node.Solve()
 
@@ -76,7 +91,7 @@ if __name__ == '__main__':
                     Gz[t_last] = copy.copy(Gz[t_bar])
                     for sp in Probs.keys():
                         s_model, s_T, s_W, s_r, s_ub, s_lb = SP[t_bar][sp].ReturnModel()
-                        SP[t_last][sp] = SubProb(s_model, s_T, s_W, s_r, s_ub, s_lb)
+                        SP[t_last][sp] = SubProb(s_model.copy(), copy.copy(s_T), copy.copy(s_W), copy.copy(s_r), copy.copy(s_ub), copy.copy(s_lb))
 
             del T1[t_bar]
             del T1_v[t_bar]
@@ -93,10 +108,9 @@ if __name__ == '__main__':
             SP_y[sp], SP_v[sp], SP_bt[sp], SP_ut[sp], SP_lt[sp], Gz[t_bar][sp], gz = Convexify(T1[t[k]], SP[t[k]][sp], T1_x[t[k]], Gz[t_bar][sp], gz)
             SP_T[sp], SP_r[sp], SP_ub[sp], SP_lb[sp] = SP[t[k]][sp].T, SP[t[k]][sp].r, SP[t[k]][sp].ub, SP[t[k]][sp].lb
         T1[t[k]].AddBendersCut(SP_bt, SP_ut, SP_lt, SP_T, SP_r, SP_ub, SP_lb)
-
+        print(SP_y)
         B_output = T1[t[k]].Solve()
         T1_x[t[k]], T1_v[t[k]] = B_output[0], B_output[1]
-
         '''Update Upper Bound V'''
         int_flag = True
         for y in SP_y.values():
@@ -122,4 +136,4 @@ if __name__ == '__main__':
         k += 1
     print(f'Optimal Solution is: {X_star}')
     plt.plot(v_list)
-    plt.show()
+    # plt.show()
