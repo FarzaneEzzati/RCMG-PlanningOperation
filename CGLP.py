@@ -66,7 +66,7 @@ class CGLP:
         self.cglp.update()
 
     def Update(self, pi0, pi1, pi2):
-        new_key = len(self.L2[1].keys()) + 1
+        new_key = len(self.L2[list(self.L2.keys())[0]].keys()) + 1
         for t2 in self.T2.keys():
             self.L2[t2][new_key] = self.cglp.addVar(name='L2')
             self.rL2[t2] += pi0 * self.L2[t2][new_key]
