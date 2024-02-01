@@ -25,7 +25,7 @@ def geneCases():
 
 # Counts
 T = 4    # count of hours per week
-LCount = 3     # count of locations
+LCount = 1    # count of locations
 DVCCount = 3    # count of devices
 MCount = 1   # count of months
 HCount = 1    # count of households
