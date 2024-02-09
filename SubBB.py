@@ -29,7 +29,6 @@ class SubBB:
                     T2_y[tt_last], T2_v[tt_last] = y2, v2
                     TI2_v[tt_last] = T2_v[tt_last]
                 else:
-                    print('infeasible y')
                     del T2[tt_last]
 
                 tt_last += 1
@@ -40,7 +39,6 @@ class SubBB:
                     T2_y[tt_last], T2_v[tt_last] = y2, v2
                     TI2_v[tt_last] = T2_v[tt_last]
                 else:
-                    print('infeasible y')
                     del T2[tt_last]
 
                 del T2[tt_bar]

@@ -1,7 +1,6 @@
-import pickle
 from MasterSub import MasterProb, SubProb, Probs
-from Convexify import Convexify
-from ConvCGSEP import ConvCGSEP
+from SubBB import SubBB
+from CGLP import CGLP
 import pickle
 import random
 import copy
@@ -11,6 +10,7 @@ import matplotlib.pyplot as plt
 env = gp.Env()
 env.setParam('OutputFlag', 0)
 env.setParam('DualReductions', 0)
+
 
 def OpenMasterFile():
     # Load the indices
@@ -38,7 +38,9 @@ with open(f'Models/Indices.pkl', 'rb') as f:
     X_keys, Y_keys, Y_int_keys = pickle.load(f)
 f.close()
 
+
 if __name__ == '__main__':
+    D, max_cut = 4, 10
     m_model, m_A, m_b, m_ub, m_lb = OpenMasterFile()
     root_model = MasterProb(m_model, m_A, m_b, m_ub, m_lb, X_keys)
     root_output = root_model.Solve()
@@ -57,10 +59,10 @@ if __name__ == '__main__':
     k, t, t_last = 1, {}, 0  # Iteration number
 
     Gz = {0: {sp: [] for sp in Probs.keys()}}
-    gz = 1
+    gz = 0
     epsilon = 0.1   # Stopping tolerance
     print(f'V: {V:0.2f} ====== v: {v:0.2f}')
-    while (k < 20, len(T1) > 0) == (True, True):
+    while (k < 20, V-v > epsilon) == (True, True):
         print(f'\n{10*">"} Iteration {k}')
         # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Branching Till Integer Found <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
         while True:
@@ -75,10 +77,10 @@ if __name__ == '__main__':
             # Node splitting
             split_key = random.choice(non_int)
             split_value = T1_x[t_bar][split_key]
+            node_1, A_1, b_1, ub_1, lb_1, x_keys_1 = T1[t_bar].ReturnModel()
             for sense in ('u', 'l'):
                 t_last += 1
-                node_1, A_1, b_1, ub_1, lb_1, x_1 = T1[t_bar].ReturnModel()
-                temp_node = MasterProb(node_1.copy(), copy.copy(A_1), copy.copy(b_1), copy.copy(ub_1), copy.copy(lb_1), copy.copy(x_1))
+                temp_node = MasterProb(node_1.copy(), copy.copy(A_1), copy.copy(b_1), copy.copy(ub_1), copy.copy(lb_1), copy.copy(x_keys_1))
                 temp_node.AddSplit(split_key, split_value, sense)
                 temp_output = temp_node.Solve()
 
@@ -98,55 +100,85 @@ if __name__ == '__main__':
         # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Benders' Cut Generation <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
         SP_y, SP_v, SP_bt, SP_ut, SP_lt = {}, {}, {}, {}, {}
         SP_T, SP_r, SP_ub, SP_lb = {}, {}, {}, {}
-        do_cglp = True
+
+        do_cglp = None
         for sp in SP[t[k]].keys():
             print(f'Convexifying SP {sp}:', end=' ')
-            zero_cglp, data = Convexify(T1[t[k]], SP[t[k]][sp], T1_x[t[k]], Gz[t_bar][sp], gz)
-            if not zero_cglp[0]:
-                w_key, y_d, ub_tau, lb_tau = len(SP[t[k]][sp].sub.getVars()) + 1, zero_cglp[1], zero_cglp[2], zero_cglp[3]
+            gen_cut, do_cglp, max_cuts = True, True, 0
+            y_zero_cglp, joint = None, None
+
+            y_d, v_d, bt_d, ut_d, lt_d = SP[t[k]][sp].SolveForBenders(T1_x[t[k]])
+            if not YInt({y_key: y_d[y_key] for y_key in SP[t[k]][sp].YIK}):
+                print('All Y Int', end=' ')
+                gen_cut = False
+            else:
+                BBT = SubBB(SP[t[k]][sp], y_d, v_d, T1_x[t[k]], D)
+                cglp_class = CGLP(T1[t[k]], SP[t[k]][sp], BBT.T2, T1_x[t[k]], y_d)
+
+                while (do_cglp, gen_cut, max_cuts <= 15) == (True, True, True):
+                    max_cuts += 1
+                    cglp_class.cglp.optimize()
+                    if cglp_class.cglp.ObjVal <= 0:
+                        print('Faced CGLP <= 0 ')
+                        nie = [key for key in SP[t[k]][sp].YIK if y_d[key] != int(y_d[key])]
+                        y_zero_cglp = random.choice(nie)
+                        cglp_class.cglp.dispose()
+                        do_cglp = False
+                    else:
+                        PI1 = {x_key: cglp_class.PI1[x_key].x for x_key in SP[t[k]][sp].X.keys()}
+                        PI2 = {y_key: cglp_class.PI2[y_key].x for y_key in SP[t[k]][sp].Y.keys()}
+                        PI0 = cglp_class.PI0.x
+                        gz += 1
+                        Gz[t[k]][sp].append(gz)
+                        SP[t[k]][sp].AddCut(PI0, PI1, PI2, gz)
+                        y_d, v_d, bt_d, ut_d, lt_d = SP[t[k]][sp].SolveForBenders(T1_x[t[k]])
+                        cglp_class.UpdateModel(PI0, PI1, PI2, y_d)
+                        for t2 in BBT.T2.keys():
+                            if sum([int(BBT.T2[t2].lb[i] <= y_d[i] <= BBT.T2[t2].ub[i]) for i in Y_int_keys]) == \
+                                    len(Y_int_keys):
+                                gen_cut = False
+                                break
+            if do_cglp:
+                print(f'Done. Last cut {gz}')
+                SP_y[sp], SP_v[sp], SP_bt[sp], SP_ut[sp], SP_lt[sp] = y_d, v_d, bt_d, ut_d, lt_d
+                SP_T[sp], SP_r[sp], SP_ub[sp], SP_lb[sp] = SP[t[k]][sp].T, SP[t[k]][sp].r, SP[t[k]][sp].ub, SP[t[k]][sp].lb
+            else:
+                w_key = len(SP[t[k]][sp].sub.getVars())+1
                 T1[t[k]].X[w_key] = T1[t[k]].master.addVar(ub=1, name=f'w[{w_key}]')
                 T1[t[k]].X[w_key].UB, T1[t[k]].X[w_key].LB = 1, 0
                 T1[t[k]].ub[w_key], T1[t[k]].lb[w_key] = 1, 0
-                SP[t[k]][sp].wUpdate(y_d, w_key, ub_tau, lb_tau)
+                SP[t[k]][sp].wUpdate(w_key, y_zero_cglp)
                 for omega in SP[t[k]].keys():
                     if omega != sp:
                         SP[t[k]][omega].wAdd(w_key)
                 break
-            else:
-                SP_y[sp], SP_v[sp], SP_bt[sp], SP_ut[sp], SP_lt[sp], Gz[t_bar][sp], gz = data[0], data[1], data[2], data[3], data[4], data[5], data[6]
-                SP_T[sp], SP_r[sp], SP_ub[sp], SP_lb[sp] = SP[t[k]][sp].T, SP[t[k]][sp].r, SP[t[k]][sp].ub, SP[t[k]][sp].lb
+        # print(SP[t[k]][2].bt)
 
-        if zero_cglp[0]:
+
+
+        if do_cglp:
             print('Benders cut added.')
             T1[t[k]].AddBendersCut(SP_bt, SP_ut, SP_lt, SP_T, SP_r, SP_ub, SP_lb)
             B_output = T1[t[k]].Solve()
             T1_x[t[k]], T1_v[t[k]] = B_output[0], B_output[1]
-            if T1_v[t[k]] > v:
-                v = T1_v[t[k]]
             '''Update Upper Bound V'''
             int_flag = True
-            for y in SP_y.values():
-                if YInt({y_key: y[y_key] for y_key in Y_int_keys}):
-                    int_flag = False
-                    break
-            if int_flag:
+            if sum([len(YInt({y_key: y_test[y_key] for y_key in Y_int_keys})) for y_test in SP_y.values()]) == 0:
                 print('All y(s) are Int')
-                if T1_v[t[k]] < V:
-                    V = copy.copy(T1_v[t[k]])
-                    X_star = copy.copy(T1_x[t[k]])
-                    nodes_to_remove = []
-                    for key in T1.keys():
-                        if T1_v[key] > V:
-                            nodes_to_remove.append(key)
+                do_update_V = T1_v[t[k]] - T1[t[k]].eta.x + sum([Probs[s] * SP_v[s] for s in Probs.keys()])
+                if do_update_V < V:
+                    V = do_update_V
+                    X_star = T1_x[t[k]]
+                    nodes_to_remove = [key for key in T1.keys() if T1_v[key] > V]
                     for key in nodes_to_remove:
                         del T1[key]
                         del T1_v[key]
                         del T1_x[key]
         else:
-            T1_xv = T1[t[k]].Solve()
-            T1_x[t[k]], T1_v[t[k]] = T1_xv[0], T1_xv[1]
+            B_output = T1[t[k]].Solve()
+            T1_x[t[k]], T1_v[t[k]] = B_output[0], B_output[1]
 
-        print(f'V: {V:0.2f} ====== v: {v:0.2f}')
+        print(f'V={V:0.2f}     v={v:0.2f}    Gap={100*(V-v)/abs(V):0.2f}%')
         k += 1
     print(f'Optimal Solution is: {X_star}')
     plt.plot(v_list)
