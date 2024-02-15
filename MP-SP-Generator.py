@@ -20,7 +20,7 @@ def geneCases():
     lp = pd.read_csv('Data/Load_profile_1.csv')
     # PV output for one unit (4kW)
     pv_profile = pd.read_csv('Data/PV_profiles.csv')
-    return scens, probs, [lp], pv_profile
+    return scens, probs, lp, pv_profile
 
 
 # Counts
@@ -68,9 +68,9 @@ GridMinus = alpha * GridPlus
 GenerPrice = beta * GridPlus
 LoadPrice = zeta * GridPlus
 
-VoLL = {h: 2.5 * GridPlus for h in RNGHouse}
+VoLL = 2.5 * GridPlus
 TransMax = 0.3  # %
-TransPrice = TransMax * np.mean([VoLL[key] for key in VoLL.keys()])
+TransPrice = TransMax * VoLL
 
 ES_gamma = 0.85
 DG_gamma = 0.4  # litr/kW
@@ -92,132 +92,103 @@ X_ild = [(ii, l, d) for ii in RNGSta for l in RNGLoc for d in RNGDvc]
 X_id = [(ii, d) for ii in RNGSta for d in RNGDvc]
 Y_itg = [(ii, t, g)
         for ii in RNGSta for t in RNGTime for g in RNGMonth]
-Y_ihtg = [(ii, h, t, g)
-         for ii in RNGSta for h in RNGHouse for t in RNGTime for g in RNGMonth]
 Y_ittg = [(ii, t, to, g)
          for ii in RNGSta for t in RNGTime for to in RNGTime for g in RNGMonth]
 
 Y_itgs = [(ii, t, g, s)
         for ii in RNGSta for t in RNGTime for g in RNGMonth for s in RNGScen]
-Y_ihtgs = [(ii, h, t, g, s)
-         for ii in RNGSta for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen]
 Y_ittgs = [(ii, t, to, g, s)
          for ii in RNGSta for t in RNGTime for to in RNGTime for g in RNGMonth for s in RNGScen]
 
-# Save all ranges for the algorithm part
-with open('Data/Ranges.pkl', 'wb') as handle:
-    pickle.dump([RNGLoc, RNGDvc, RNGTime, RNGMonth, RNGHouse, RNGScen, RNGSta, Y_itg, Y_ihtg, Y_ittg], handle)
-handle.close()
 
 eta_M = -10000000
 
 
-class MasterPro:
-    def __init__(self):
-        self.master = gp.Model('MasterProb', env=env)
+def MasterProb():
+        master = gp.Model('MasterProb', env=env)
         '''Investment & Reinvestment variables'''
         X = {}
         for l in RNGLoc:
             for d in RNGDvc:
-                X[(1, l, d)] = self.master.addVar(lb=LB1[d], ub=UB1[d], name=f'X[1,{l},{d}]')
+                X[(1, l, d)] = master.addVar(lb=LB1[d], ub=UB1[d], name=f'X[1,{l},{d}]')
         for l in RNGLoc:
             for d in RNGDvc:
-                X[(2, l, d)] = self.master.addVar(lb=LB2[d], ub=UB2[d], name=f'X[2,{l},{d}]')
-        self.X_keys = range(1, LCount * (2 * DVCCount) + 1)  # starts from 1
-        self.X_indcies = X_ild
-
+                X[(2, l, d)] = master.addVar(lb=LB2[d], ub=UB2[d], name=f'X[2,{l},{d}]')
+        master.update()
+        X_keys = range(1, len(X_ild)+1)
 
         # Investment constraint
-        self.master.addConstrs(-quicksum(X[(1, l, d)] * C[d] for d in RNGDvc) >= -Budget1 for l in RNGLoc)
+        master.addConstrs(-quicksum(X[(1, l, d)] * C[d] for d in RNGDvc) >= -Budget1 for l in RNGLoc)
         # ReInvestment constraint
-        self.master.addConstrs(-quicksum(X[(2, l, d)] * C[d] for d in RNGDvc) >= -Budget2 for l in RNGLoc)
+        master.addConstrs(-quicksum(X[(2, l, d)] * C[d] for d in RNGDvc) >= -Budget2 for l in RNGLoc)
         # Capacity limit
-        self.master.addConstrs(-quicksum(X[(1, l, d)] for l in RNGLoc) >= -UB1[d] for d in RNGDvc)
-        self.master.addConstrs(-quicksum(X[(2, l, d)] for l in RNGLoc) >= -UB2[d] for d in RNGDvc)
-        self.master.addConstrs(quicksum(X[(1, l, d)] for l in RNGLoc) >= LB1[d] for d in RNGDvc)
-        self.master.addConstrs(quicksum(X[(2, l, d)] for l in RNGLoc) >= LB2[d] for d in RNGDvc)
+        master.addConstrs(-quicksum(X[(1, l, d)] for l in RNGLoc) >= -UB1[d] for d in RNGDvc)
+        master.addConstrs(-quicksum(X[(2, l, d)] for l in RNGLoc) >= -UB2[d] for d in RNGDvc)
+        master.addConstrs(quicksum(X[(1, l, d)] for l in RNGLoc) >= LB1[d] for d in RNGDvc)
+        master.addConstrs(quicksum(X[(2, l, d)] for l in RNGLoc) >= LB2[d] for d in RNGDvc)
 
-        # Get A and b to save it
-        self.master.update()
-        A, b = self.GetAb()  # Checked: correct
-
-        # Save upper and lower bounds
-        upper_bounds = {}
-        lower_bounds = {}
+        # Assign Upper and Lower bounds to X
         for ild in X_ild:
             if ild[0] == 1:
-                upper_bounds[X[ild].index+1] = UB1[ild[2]]
-                lower_bounds[X[ild].index+1] = LB1[ild[2]]
+                X[ild].UB = UB1[ild[2]]
+                X[ild].LB = LB1[ild[2]]
             else:
-                upper_bounds[X[ild].index+1] = UB2[ild[2]]
-                lower_bounds[X[ild].index+1] = LB2[ild[2]]
-        eta = self.master.addVar(lb=eta_M, name='eta')
+                X[ild].UB = UB2[ild[2]]
+                X[ild].LB = LB2[ild[2]]
+
         Capital = 0
         for l in RNGLoc:
             Capital += quicksum((X[(1, l, d)] + X[(2, l, d)]) * CO[d] for d in RNGDvc)
-        self.master.setObjective(Capital + eta, sense=GRB.MINIMIZE)
+        eta = master.addVar(lb=eta_M, name='eta')
+        master.setObjective(Capital + eta, sense=GRB.MINIMIZE)
 
         # Save master in mps + save data in pickle
-        self.master.update()
-        self.master.write('Models/Master.mps')
-        with open(f'Models/Master.pkl', 'wb') as handle:
-            pickle.dump([A, b, upper_bounds, lower_bounds], handle)
-        handle.close()
+        master.update()
+        master.write('Models/Master.mps')
+        return X_keys
 
-    def GetAb(self):
-        Coefs = IndexUp(self.master.getA().todok())  # dictionary that indexed up. Increase indexes by one to avoid 0 index
-        m = np.max([key[0] for key in Coefs.keys()])  # m only covers the count of constraints that we need
-        A_sparse = Coefs
-        b_sparse = {}
-        ConstrList = self.master.getConstrs()
-        for row in range(1, m + 1):
-            b_sparse[row] = ConstrList[row - 1].rhs
-
-        # Note that T, W, r are spares matrices in a dictionary format.
-        return A_sparse, b_sparse
-
-
-class SubProb:
-    def __init__(self, scen):
-        self.sub = gp.Model(env=env)
-
+def SubProb(scen):
+        sub = gp.Model(env=env)
         '''X vars to keep the model accessible for TMatrix'''
         if True:
-            x_fixed = self.sub.addVars(X_ild, name='X')
-            self.X_keys = range(1, LCount * (2 * DVCCount) + 1)  # starts from 1
+            X_fixed = sub.addVars(X_ild, name='X')
+            X_keys = range(1, len(X_ild)+1)  # starts from 1
         '''Scheduling variables'''
         if True:
-            U_E = self.sub.addVars(Y_itg, lb=0, ub=1, name=f'U_E')  # Charge/discharge binary
-            U_G = self.sub.addVars(Y_itg, lb=0, ub=1, name=f'U_G')  # Import/export binary
-            Y_PVES = self.sub.addVars(Y_itg, name=f'Y_PVES')  # PV to ES (1 before reinvestment, 2 after)
-            Y_DGES = self.sub.addVars(Y_itg, name=f'Y_DGES')  # DE to ES
-            Y_GridES = self.sub.addVars(Y_itg, name=f'Y_GridES')   # Grid to ES
-            Y_PVL = self.sub.addVars(Y_itg, name=f'Y_PV')  # Pv to L
-            Y_DGL = self.sub.addVars(Y_itg, name=f'Y_DGL')  # Dg to L
-            Y_ESL = self.sub.addVars(Y_itg, name=f'Y_ESL')  # ES to L
-            Y_GridL = self.sub.addVars(Y_itg, name=f'Y_GridL')  # Grid to L
-            Y_PVCur = self.sub.addVars(Y_itg, name=f'Y_PVCur')  # PV Curtailed
-            Y_DGCur = self.sub.addVars(Y_itg, name=f'Y_DGCur')  # DG curtailed
-            Y_PVGrid = self.sub.addVars(Y_itg, name=f'Y_DGGrid')  # PV to Grid
-            Y_DGGrid = self.sub.addVars(Y_itg, name=f'Y_PVGrid')  # Dg to Grid
-            Y_ESGrid = self.sub.addVars(Y_itg, name=f'Y_ESGrid')  # ES to Grid
-            Y_E = self.sub.addVars(Y_itg, name=f'Y_E')  # ES level of energy
-            Y_LH = self.sub.addVars(Y_ihtg, name=f'Y_LH')  # Load served
-            Y_LL = self.sub.addVars(Y_ihtg, name=f'Y_LL')  # Load lost
-            Y_LT = self.sub.addVars(Y_ittg, name=f'Y_LT')  # Load transferred
-            self.sub.update()
+            U_E = sub.addVars(Y_itg, lb=0, ub=1, name=f'U_E')  # Charge/discharge binary
+            U_G = sub.addVars(Y_itg, lb=0, ub=1, name=f'U_G')  # Import/export binary
+            Y_PVES = sub.addVars(Y_itg, name=f'Y_PVES')  # PV to ES (1 before reinvestment, 2 after)
+            Y_DGES = sub.addVars(Y_itg, name=f'Y_DGES')  # DE to ES
+            Y_GridES = sub.addVars(Y_itg, name=f'Y_GridES')   # Grid to ES
+            Y_PVL = sub.addVars(Y_itg, name=f'Y_PV')  # Pv to L
+            Y_DGL = sub.addVars(Y_itg, name=f'Y_DGL')  # Dg to L
+            Y_ESL = sub.addVars(Y_itg, name=f'Y_ESL')  # ES to L
+            Y_GridL = sub.addVars(Y_itg, name=f'Y_GridL')  # Grid to L
+            Y_PVCur = sub.addVars(Y_itg, name=f'Y_PVCur')  # PV Curtailed
+            Y_DGCur = sub.addVars(Y_itg, name=f'Y_DGCur')  # DG curtailed
+            Y_PVGrid = sub.addVars(Y_itg, name=f'Y_DGGrid')  # PV to Grid
+            Y_DGGrid = sub.addVars(Y_itg, name=f'Y_PVGrid')  # Dg to Grid
+            Y_ESGrid = sub.addVars(Y_itg, name=f'Y_ESGrid')  # ES to Grid
+            Y_E = sub.addVars(Y_itg, name=f'Y_E')  # ES level of energy
+            Y_LH = sub.addVars(Y_itg, name=f'Y_LH')  # Load served
+            Y_LL = sub.addVars(Y_itg, name=f'Y_LL')  # Load lost
+            Y_LT = sub.addVars(Y_ittg, name=f'Y_LT')  # Load transferred
+
             '''Saving all vars keys in W and T matrix'''
-            self.Y_keys = range(self.X_keys[-1] + 1, len(self.sub.getVars()) + 1)
+            sub.update()
+            Y_keys = range(X_keys[-1] + 1, len(sub.getVars()) + 1)
+
             '''Obtain the index for integer variables in the second stage'''
-            self.int_var_keys = []
-            for var in self.sub.getVars():
+            Y_intk = []
+            for var in sub.getVars():
                 if ('U_E' in var.VarName, 'U_G' in var.VarName) != (False, False):
-                    self.int_var_keys.append(var.index + 1)
+                    Y_intk.append(var.index + 1)
+
         '''Specify Load Demand, PV, Outage Duration for the scenario s'''
         if True:
             # Define the load profiles and PV profiles
-            L = {(ii, h, t, g):  (1 + 0.05 * scen) * 12 * 10 * Load[h - 1][f'Month {g}'].iloc[t - 1]
-                  for ii in RNGSta for h in RNGHouse for t in RNGTime for g in RNGMonth}
+            L = {(ii, t, g):  (1 + 0.05 * scen) * 12 * 10 * Load[f'Month {g}'].iloc[t - 1]
+                  for ii in RNGSta for t in RNGTime for g in RNGMonth}
 
             PV = {(t, g): (0.5 + 0.05 * scen) * PV_Unit[f'Month {g}'].iloc[t - 1] for t in RNGTime for g in RNGMonth}
 
@@ -229,266 +200,96 @@ class SubProb:
         for ii in RNGSta:  # RNGSta = (1, 2)
             for g in RNGMonth:
                 # ES levels
-                self.sub.addConstr(Y_E[(ii, 1, g)] == SOC_LB * quicksum(x_fixed[(1, l, 1)] + (ii - 1) * x_fixed[(2, l, 1)] for l in RNGLoc), name='t1')
-                # Only use the summation of ES capacity before/after reinvestment for rhs update in ABC BB-D
+                sub.addConstr(Y_E[(ii, 1, g)] == SOC_LB * quicksum(X_fixed[(1, l, 1)] + (ii - 1) * X_fixed[(2, l, 1)] for l in RNGLoc), name='t1')
 
                 for t in RNGTime:
                     # Limits on energy level in ES
-                    self.sub.addConstr(Y_E[(ii, t, g)] >= SOC_LB * quicksum(x_fixed[(1, l, 1)] + (ii - 1) * x_fixed[(2, l, 1)] for l in RNGLoc), name='E_LB')
+                    sub.addConstr(Y_E[(ii, t, g)] >= SOC_LB * quicksum(X_fixed[(1, l, 1)] + (ii - 1) * X_fixed[(2, l, 1)] for l in RNGLoc), name='E_LB')
 
 
-                    self.sub.addConstr(-Y_E[(ii, t, g)] >= -SOC_UB * quicksum(x_fixed[(1, l, 1)] + (ii - 1) * x_fixed[(2, l, 1)] for l in RNGLoc), name='E_UB')
+                    sub.addConstr(-Y_E[(ii, t, g)] >= -SOC_UB * quicksum(X_fixed[(1, l, 1)] + (ii - 1) * X_fixed[(2, l, 1)] for l in RNGLoc), name='E_UB')
 
                     # PV power decomposition
-                    self.sub.addConstr((Y_PVL[(ii, t, g)] + Y_PVES[(ii, t, g)] +
+                    sub.addConstr((Y_PVL[(ii, t, g)] + Y_PVES[(ii, t, g)] +
                                         Y_PVCur[(ii, t, g)] + Y_PVGrid[(ii, t, g)]) ==
-                                        PV[(t, g)] * quicksum(x_fixed[(1, l, 2)] + (ii - 1) * x_fixed[(2, l, 2)] for l in RNGLoc), name='PV')
+                                        PV[(t, g)] * quicksum(X_fixed[(1, l, 2)] + (ii - 1) * X_fixed[(2, l, 2)] for l in RNGLoc), name='PV')
 
                     # DG power decomposition
-                    self.sub.addConstr(Y_DGL[(ii, t, g)] + Y_DGES[(ii, t, g)] +
+                    sub.addConstr(Y_DGL[(ii, t, g)] + Y_DGES[(ii, t, g)] +
                                     Y_DGGrid[(ii, t, g)] + Y_DGCur[(ii, t, g)] ==
-                                    quicksum(x_fixed[(1, l, 3)] + (ii - 1) * x_fixed[(2, l, 3)] for l in RNGLoc), name='DG')
+                                    quicksum(X_fixed[(1, l, 3)] + (ii - 1) * X_fixed[(2, l, 3)] for l in RNGLoc), name='DG')
 
 
                     # Assigned load decomposition
-                    self.sub.addConstr(quicksum(Y_LH[(ii, h, t, g)] for h in RNGHouse) ==
+                    sub.addConstr(Y_LH[(ii, t, g)] ==
                                     Eta_i * (Y_ESL[(ii, t, g)] + Y_DGL[(ii, t, g)] + Y_PVL[(ii, t, g)]) +
                                     Y_GridL[(ii, t, g)], name='LoadH')
 
                     for h in RNGHouse:
                         # Load decomposition
-                        self.sub.addConstr(Y_LH[(ii, h, t, g)] + Y_LL[(ii, h, t, g)] +
+                        sub.addConstr(Y_LH[(ii, t, g)] + Y_LL[(ii, t, g)] +
                                         quicksum(Y_LT[(ii, t, to, g)] for to in range(t, T + 1)) ==
-                                        L[(ii, h, t, g)], name='LoadD')
+                                        L[(ii, t, g)], name='LoadD')
 
                     if t in DontTran:
                         # Don't allow transfer
-                        self.sub.addConstrs((Y_LT[(ii, t, to, g)] == 0 for to in range(t, T + 1)), name='NoTrans')
+                        sub.addConstrs((Y_LT[(ii, t, to, g)] == 0 for to in range(t, T + 1)), name='NoTrans')
                     else:
                         # Max load transfer
-                        self.sub.addConstr(TransMax * np.sum([L[(ii, h, t, g)] for h in RNGHouse]) -
+                        sub.addConstr(TransMax * L[(ii, t, g)] -
                                            quicksum(Y_LT[(ii, t, to, g)] for to in range(t, T + 1)) >= 0, name='MaxLoadTrans')
 
                     # Load transfer and E level
-                    self.sub.addConstr(Y_E[(ii, t, g)] - quicksum(Y_LT[(ii, to, t, g)] for to in range(1, t)) >= 0,  name='ES Load limit')
+                    sub.addConstr(Y_E[(ii, t, g)] - quicksum(Y_LT[(ii, to, t, g)] for to in range(1, t)) >= 0,  name='ES Load limit')
 
                     # Prohibited transfer to self
-                    self.sub.addConstr(Y_LT[(ii, t, t, g)] == 0, name='TransIt')
+                    sub.addConstr(Y_LT[(ii, t, t, g)] == 0, name='TransIt')
 
                     # ES charging/discharging constraints
-                    self.sub.addConstr((UB1[1] + (ii - 1) * UB2[1]) * U_E[(ii, t, g)] -
+                    sub.addConstr((UB1[1] + (ii - 1) * UB2[1]) * U_E[(ii, t, g)] -
                                        (Y_ESL[(ii, t, g)] + Y_ESGrid[(ii, t, g)]) >= 0, name='Discharge')
-                    self.sub.addConstr((UB1[1] + (ii - 1) * UB2[1]) * (1 - U_E[(ii, t, g)]) -
+                    sub.addConstr((UB1[1] + (ii - 1) * UB2[1]) * (1 - U_E[(ii, t, g)]) -
                                        (Y_PVES[(ii, t, g)] + Y_GridES[(ii, t, g)] + Y_DGES[(ii, t, g)]) >= 0, name='Charge')
 
-                    self.sub.addConstr(1000000 * U_G[(ii, t, g)] -
+                    sub.addConstr(1000000 * U_G[(ii, t, g)] -
                                        (Y_ESGrid[(ii, t, g)] + Y_PVGrid[(ii, t, g)] + Y_DGGrid[(ii, t, g)]) >= 0,
                                        name='Grid+')
-                    self.sub.addConstr(1000000 * (1 - U_G[(ii, t, g)]) -
+                    sub.addConstr(1000000 * (1 - U_G[(ii, t, g)]) -
                                        (Y_GridES[(ii, t, g)] + Y_GridL[(ii, t, g)]) >= 0, name='Grid-')
 
                     # Prohibited transaction with the grid during outage
                     if Out_Time[g] != 0:
                         for ot in Out_Time[g]:
-                            self.sub.addConstr(Y_GridL[(ii, ot, g)] + Y_GridES[(ii, ot, g)] == 0, name='')
-                            self.sub.addConstr(Y_PVGrid[(ii, ot, g)] + Y_ESGrid[(ii, ot, g)] +
+                            sub.addConstr(Y_GridL[(ii, ot, g)] + Y_GridES[(ii, ot, g)] == 0, name='')
+                            sub.addConstr(Y_PVGrid[(ii, ot, g)] + Y_ESGrid[(ii, ot, g)] +
                                             Y_DGGrid[(ii, ot, g)] == 0, name='Outage')
+                            sub.addConstr(U_G[(ii, ot, g)] == 0)
 
                 for t in range(1, T-1):
                     # Balance of power flow
-                    self.sub.addConstr(Y_E[(ii, t + 1, g)] ==
+                    sub.addConstr(Y_E[(ii, t + 1, g)] ==
                                        Y_E[(ii, t, g)] +
                                         ES_gamma * (Y_PVES[(ii, t, g)] + Y_DGES[(ii, t, g)] + Eta_c * Y_GridES[(ii, t, g)]) -
                                         (Eta_i / ES_gamma) * (Y_ESL[(ii, t, g)] + Y_ESGrid[(ii, t, g)]), name='Balance')
-        '''Saving Bounds'''
+        '''Assigning Bounds'''
         if True:
-            '''Upper bounds'''
-            Binary_U_bound = [1 for _ in Y_itg]
-            ES_U_bound = [UB1[1] + (itg[0] - 1) * UB2[1] for itg in Y_itg]
-            PV_U_bound = [UB1[2] + (itg[0] - 1) * UB2[2] for itg in Y_itg]
-            DG_U_bound = [UB1[3] + (itg[0] - 1) * UB2[3] for itg in Y_itg]
-            L_total_U_bound = [sum(L[(itg[0], h, itg[1], itg[2])] for h in RNGHouse) for itg in Y_itg]
-            L_U_bound = [L[ihtg] for ihtg in Y_ihtg]
-            L_t_U_bound = [sum(L[(ittg[0], h, ittg[1], ittg[3])] for h in RNGHouse) for ittg in Y_ittg]
-            upper_bounds = {}
+            for itg in Y_itg:
+                Y_ESL[itg].UB = SOC_UB*(UB1[1] + (itg[0] - 1) * UB2[1])
+                Y_ESGrid[itg].UB = SOC_UB * (UB1[1] + (itg[0] - 1) * UB2[1])
+                Y_PVL[itg].UB = UB1[2] + (itg[0] - 1) * UB2[2]
+                Y_PVGrid[itg].UB = UB1[2] + (itg[0] - 1) * UB2[2]
+                Y_PVES[itg].UB = UB1[2] + (itg[0] - 1) * UB2[2]
+                Y_PVCur[itg].UB = UB1[2] + (itg[0] - 1) * UB2[2]
+                Y_DGGrid[itg].UB = UB1[3] + (itg[0] - 1) * UB2[3]
+                Y_DGL[itg].UB = UB1[3] + (itg[0] - 1) * UB2[3]
+                Y_DGES[itg].UB = UB1[3] + (itg[0] - 1) * UB2[3]
+                Y_DGCur[itg].UB = UB1[3] + (itg[0] - 1) * UB2[3]
+                Y_GridES[itg].UB = SOC_UB*(UB1[1] + (itg[0] - 1) * UB2[1])
+                Y_GridL[itg].UB = L[(itg[0], itg[1], itg[2])]
+                Y_LL[itg].UB = L[(itg[0], itg[1], itg[2])]
+            for ittg in Y_ittg:
+                Y_LT[ittg].UB = L[(ittg[0], ittg[1], ittg[3])]
 
-            last_key = self.X_keys[-1]
-            # U_E
-            for value in Binary_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # U_G
-            for value in Binary_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # Y_PVES
-            for value in PV_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # Y_DGES
-            for value in DG_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # Y_GridES
-            for value in ES_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # Y_PVL
-            for value in PV_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # Y_DGL
-            for value in DG_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # Y_ESL
-            for value in ES_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # Y_GridL
-            for value in L_total_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # Y_PVCur
-            for value in PV_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # Y_DGCur
-            for value in DG_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # Y_PVGrid
-            for value in PV_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # Y_DGGrid
-            for value in DG_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # Y_ESGrid
-            for value in ES_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # E
-            for value in ES_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # Y_LH
-            for value in L_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-
-            # Y_LL
-            for value in L_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            # Y_LT
-            for value in L_t_U_bound:
-                last_key += 1
-                upper_bounds[last_key] = value
-            '''End of upper bounds'''
-
-            '''Lower bounds'''
-            Binary_L_bound = [0 for _ in Y_itg]
-            ES_L_bound = [0 for _ in Y_itg]
-            PV_L_bound = [0 for _ in Y_itg]
-            DG_L_bound = [0 for _ in Y_itg]
-            L_total_L_bound = [0 for _ in Y_itg]
-            L_L_bound = [0 for _ in Y_ihtg]
-            L_t_L_bound = [0 for _ in Y_ittg]
-
-            lower_bounds = {}
-            last_key = self.X_keys[-1]
-            # U_E
-            for value in Binary_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # U_G
-            for value in Binary_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # Y_PVES
-            for value in PV_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # Y_DGES
-            for value in DG_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # Y_GridES
-            for value in ES_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # Y_PVL
-            for value in PV_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # Y_DGL
-            for value in DG_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # Y_ESL
-            for value in ES_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # Y_GridL
-            for value in L_total_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # Y_PVCur
-            for value in PV_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # Y_DGCur
-            for value in DG_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # Y_PVGrid
-            for value in PV_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # Y_DGGrid
-            for value in DG_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # Y_ESGrid
-            for value in ES_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # E
-            for value in ES_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # Y_LH
-            for value in L_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # Y_LL
-            for value in L_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-
-            # Y_LT
-            for value in L_t_L_bound:
-                last_key += 1
-                lower_bounds[last_key] = value
-            '''End of lower bounds'''
         '''Costs'''
         if True:
             Costs = 0
@@ -498,7 +299,7 @@ class SubProb:
                         # Curtailment cost
                         Costs += PVCurPrice * (Y_PVCur[(ii, t, g)] + Y_DGCur[(ii, t, g)])
                         # Losing load cost
-                        Costs += quicksum(VoLL[h] * Y_LL[(ii, h, t, g)] for h in RNGHouse)
+                        Costs += VoLL * Y_LL[(ii, t, g)]
                         # DG cost
                         Costs += DGEffic * (Y_DGL[(ii, t, g)] + Y_DGGrid[(ii, t, g)] +
                                            Y_DGCur[(ii, t, g)] + Y_DGES[(ii, t, g)])
@@ -506,91 +307,66 @@ class SubProb:
 
                         Costs += GridPlus * Y_GridES[(ii, t, g)] - \
                                 GridMinus * (Y_PVGrid[(ii, t, g)] + Y_ESGrid[(ii, t, g)] + Y_DGGrid[(ii, t, g)]) - \
-                                GenerPrice * quicksum(x_fixed[(ii, l, 2)] for l in RNGLoc) * PV[(t, g)] - \
+                                GenerPrice * quicksum(X_fixed[(ii, l, 2)] for l in RNGLoc) * PV[(t, g)] - \
                                 LoadPrice * (Y_ESL[(ii, t, g)] + Y_DGL[(ii, t, g)] + Y_PVL[(ii, t, g)])
 
                         # DRP cost
                         Costs += TransPrice * quicksum(Y_LT[(ii, to, t, g)] for to in RNGTime)
 
-            total_cost = GenPar * Costs
-            self.sub.setObjective(total_cost, sense=GRB.MINIMIZE)
-            self.sub.update()
-            '''Get T, W, r and save it'''
-            TMatrix, WMatrix, rMatrix = self.GetTWr()
-        '''Save model data'''
-        if True:
-            self.sub.write(f'Models/Sub{scen}.mps')
-            with open(f'Models/Sub{scen}.pkl', 'wb') as f:
-                pickle.dump([TMatrix, WMatrix, rMatrix, upper_bounds, lower_bounds], f)
-            f.close()
-    def GetTWr(self):
-        Coefs = IndexUp(self.sub.getA().todok())  # dictionary that indexed up
-        # Increase indexes by one to avoid 0 index
-        m = np.max([key[0] for key in Coefs.keys()])  # m only covers the count of constraints that we need
-        T_sparse = {}
-        W_sparse = copy.copy(Coefs)
-        r_sparse = {}
-        ConstrList = self.sub.getConstrs()
-        for row in range(1, m + 1):
-            for xkey in self.X_keys:
-                if (row, xkey) in Coefs:
-                    T_sparse[(row, xkey)] = Coefs[(row, xkey)]
-                    del W_sparse[(row, xkey)]
-
-            r_sparse[row] = ConstrList[row - 1].rhs
-
-        # Note that T, W, r are spares matrices in a dictionary format.
-        return T_sparse, W_sparse, r_sparse
-
+        total_cost = GenPar * Costs
+        sub.setObjective(total_cost, sense=GRB.MINIMIZE)
+        sub.update()
+        sub.write(f'Models/Sub{scen}.mps')
+        return Y_keys, Y_intk
 
 class DetModel:
     def __init__(self):
-        self.real = gp.Model(env=env)
+        real = gp.Model(env=env)
         X = {}
         for l in RNGLoc:
             for d in RNGDvc:
-                X[(1, l, d)] = self.real.addVar(vtype=GRB.INTEGER, lb=LB1[d], ub=UB1[d], name=f'X[1,{l},{d}]')
+                X[(1, l, d)] = real.addVar(vtype=GRB.INTEGER, lb=LB1[d], ub=UB1[d], name=f'X[1,{l},{d}]')
         for l in RNGLoc:
             for d in RNGDvc:
-                X[(2, l, d)] = self.real.addVar(vtype=GRB.INTEGER, lb=LB2[d], ub=UB2[d], name=f'X[2,{l},{d}]')
+                X[(2, l, d)] = real.addVar(vtype=GRB.INTEGER, lb=LB2[d], ub=UB2[d], name=f'X[2,{l},{d}]')
 
         Capital = 0
         for l in RNGLoc:
             # Investment constraint
-            self.real.addConstr(quicksum(X[(1, l, d)] * C[d] for d in RNGDvc) <= Budget1, name='IB')
+            real.addConstr(quicksum(X[(1, l, d)] * C[d] for d in RNGDvc) <= Budget1, name='IB')
             # ReInvestment constraint
-            self.real.addConstr(quicksum(X[(2, l, d)] * C[d] for d in RNGDvc) <= Budget2, name='RIB')
+            real.addConstr(quicksum(X[(2, l, d)] * C[d] for d in RNGDvc) <= Budget2, name='RIB')
 
             # Formulate capital cost
             Capital += quicksum((X[(1, l, d)] + X[(2, l, d)]) * CO[d] for d in RNGDvc)
 
         '''Scheduling variables'''
         if True:
-            U_E = self.real.addVars(Y_itgs, vtype=GRB.BINARY, name=f'U_E')  # Charge/discharge binary
-            U_G = self.real.addVars(Y_itgs, vtype=GRB.BINARY, name=f'U_G')  # Import/export binary
-            Y_PVES = self.real.addVars(Y_itgs, name=f'Y_PVES')  # PV to ES (1 before reinvestment, 2 after)
-            Y_DGES = self.real.addVars(Y_itgs, name=f'Y_DGES')  # DE to ES
-            Y_GridES = self.real.addVars(Y_itgs, name=f'Y_GridES')  # Grid to ES
-            Y_PVL = self.real.addVars(Y_itgs, name=f'Y_PV')  # Pv to L
-            Y_DGL = self.real.addVars(Y_itgs, name=f'Y_DGL')  # Dg to L
-            Y_ESL = self.real.addVars(Y_itgs, name=f'Y_ESL')  # ES to L
-            Y_GridL = self.real.addVars(Y_itgs, name=f'Y_GridL')  # Grid to L
-            Y_PVCur = self.real.addVars(Y_itgs, name=f'Y_PVCur')  # PV Curtailed
-            Y_DGCur = self.real.addVars(Y_itgs, name=f'Y_DGCur')  # DG curtailed
-            Y_PVGrid = self.real.addVars(Y_itgs, name=f'Y_DGGrid')  # PV to Grid
-            Y_DGGrid = self.real.addVars(Y_itgs, name=f'Y_PVGrid')  # Dg to Grid
-            Y_ESGrid = self.real.addVars(Y_itgs, name=f'Y_ESGrid')  # ES to Grid
-            Y_E = self.real.addVars(Y_itgs, name=f'Y_E')  # ES level of energy
-            Y_LH = self.real.addVars(Y_ihtgs, name=f'Y_LH')  # Load served
-            Y_LL = self.real.addVars(Y_ihtgs, name=f'Y_LL')  # Load lost
-            Y_LT = self.real.addVars(Y_ittgs, name=f'Y_LT')  # Load transferred
+            U_E = real.addVars(Y_itgs, vtype=GRB.BINARY, name=f'U_E')  # Charge/discharge binary
+            U_G = real.addVars(Y_itgs, vtype=GRB.BINARY, name=f'U_G')  # Import/export binary
+            Y_PVES = real.addVars(Y_itgs, name=f'Y_PVES')  # PV to ES (1 before reinvestment, 2 after)
+            Y_DGES = real.addVars(Y_itgs, name=f'Y_DGES')  # DE to ES
+            Y_GridES = real.addVars(Y_itgs, name=f'Y_GridES')  # Grid to ES
+            Y_PVL = real.addVars(Y_itgs, name=f'Y_PV')  # Pv to L
+            Y_DGL = real.addVars(Y_itgs, name=f'Y_DGL')  # Dg to L
+            Y_ESL = real.addVars(Y_itgs, name=f'Y_ESL')  # ES to L
+            Y_GridL = real.addVars(Y_itgs, name=f'Y_GridL')  # Grid to L
+            Y_PVCur = real.addVars(Y_itgs, name=f'Y_PVCur')  # PV Curtailed
+            Y_DGCur = real.addVars(Y_itgs, name=f'Y_DGCur')  # DG curtailed
+            Y_PVGrid = real.addVars(Y_itgs, name=f'Y_DGGrid')  # PV to Grid
+            Y_DGGrid = real.addVars(Y_itgs, name=f'Y_PVGrid')  # Dg to Grid
+            Y_ESGrid = real.addVars(Y_itgs, name=f'Y_ESGrid')  # ES to Grid
+            Y_E = real.addVars(Y_itgs, name=f'Y_E')  # ES level of energy
+            Y_LH = real.addVars(Y_itgs, name=f'Y_LH')  # Load served
+            Y_LL = real.addVars(Y_itgs, name=f'Y_LL')  # Load lost
+            Y_LT = real.addVars(Y_ittgs, name=f'Y_LT')  # Load transferred
         '''Specify Load Demand, PV, Outage Duration for the scenario s'''
         if True:
             # Define the load profiles and PV profiles
             # Define the load profiles and PV profiles
             # Define the load profiles and PV profiles
-            L = {(ii, h, t, g, s): (1 + 0.05 * s) * 20 * Load[h - 1][f'Month {g}'].iloc[t - 1]
-                  for ii in RNGSta for h in RNGHouse for t in RNGTime for g in RNGMonth for s in RNGScen}
+            L = {(ii, t, g, s): (1 + 0.05 * s) * 20 * Load[f'Month {g}'].iloc[t - 1]
+                  for ii in RNGSta for t in RNGTime for g in RNGMonth for s in RNGScen}
 
             PV = {(t, g, s): (1 + 0.05 * s) * PV_Unit[f'Month {g}'].iloc[t - 1]
                   for t in RNGTime for g in RNGMonth for s in RNGScen}
@@ -604,78 +380,78 @@ class DetModel:
             for ii in RNGSta:  # RNGSta = (1, 2)
                 for g in RNGMonth:
                     # ES levels
-                    self.real.addConstr(Y_E[(ii, 1, g, s)] == SOC_UB * quicksum(
+                    real.addConstr(Y_E[(ii, 1, g, s)] == SOC_UB * quicksum(
                         X[(1, l, 1)] + (ii - 1) * X[(2, l, 1)] for l in RNGLoc))
                     # Only use the summation of ES capacity before/after reinvestment for rhs update in ABC BB-D
 
                     for t in RNGTime:
                         # Limits on energy level in ES
-                        self.real.addConstr(Y_E[(ii, t, g, s)] >= SOC_LB * quicksum(
+                        real.addConstr(Y_E[(ii, t, g, s)] >= SOC_LB * quicksum(
                             X[(1, l, 1)] + (ii - 1) * X[(2, l, 1)] for l in RNGLoc))
 
-                        self.real.addConstr(-Y_E[(ii, t, g, s)] >= -SOC_UB * quicksum(
+                        real.addConstr(-Y_E[(ii, t, g, s)] >= -SOC_UB * quicksum(
                             X[(1, l, 1)] + (ii - 1) * X[(2, l, 1)] for l in RNGLoc))
 
                         # PV power decomposition
-                        self.real.addConstr((Y_PVL[(ii, t, g, s)] + Y_PVES[(ii, t, g, s)] +
+                        real.addConstr((Y_PVL[(ii, t, g, s)] + Y_PVES[(ii, t, g, s)] +
                                             Y_PVCur[(ii, t, g, s)] + Y_PVGrid[(ii, t, g, s)]) ==
                                            PV[(t, g, s)] * quicksum(
                             X[(1, l, 2)] + (ii - 1) * X[(2, l, 2)] for l in RNGLoc))
 
                         # DG power decomposition
-                        self.real.addConstr(Y_DGL[(ii, t, g, s)] + Y_DGES[(ii, t, g, s)] +
+                        real.addConstr(Y_DGL[(ii, t, g, s)] + Y_DGES[(ii, t, g, s)] +
                                            Y_DGGrid[(ii, t, g, s)] + Y_DGCur[(ii, t, g, s)] ==
                                            quicksum(X[(1, l, 3)] + (ii - 1) * X[(2, l, 3)] for l in RNGLoc))
 
                         # Assigned load decomposition
-                        self.real.addConstr(quicksum(Y_LH[(ii, h, t, g, s)] for h in RNGHouse) ==
+                        real.addConstr(Y_LH[(ii, t, g, s)] ==
                                            Eta_i * (Y_ESL[(ii, t, g, s)] + Y_DGL[(ii, t, g, s)] + Y_PVL[(ii, t, g, s)]) +
                                            Y_GridL[(ii, t, g, s)], name='')
 
-                        for h in RNGHouse:
-                            # Load decomposition
-                            self.real.addConstr(Y_LH[(ii, h, t, g, s)] + Y_LL[(ii, h, t, g, s)] +
-                                               quicksum(Y_LT[(ii, t, to, g, s)] for to in range(t, T + 1)) ==
-                                               L[(ii, h, t, g, s)], name='')
+
+                        real.addConstr(Y_LH[(ii, t, g, s)] + Y_LL[(ii, t, g, s)] +
+                                           quicksum(Y_LT[(ii, t, to, g, s)] for to in range(t, T + 1)) ==
+                                           L[(ii, t, g, s)], name='')
 
                         if t in DontTran:
                             # Don't allow transfer
-                            self.real.addConstrs(Y_LT[(ii, t, to, g, s)] == 0 for to in range(t, T + 1))
+                            real.addConstrs(Y_LT[(ii, t, to, g, s)] == 0 for to in range(t, T + 1))
                         else:
                             # Max load transfer
-                            self.real.addConstr(TransMax * np.sum([L[(ii, h, t, g, s)] for h in RNGHouse]) -
+                            real.addConstr(TransMax * L[(ii, t, g, s)] -
                                                quicksum(Y_LT[(ii, t, to, g, s)] for to in range(t, T + 1)) >= 0, name='')
 
                         # Load transfer and E level
-                        self.real.addConstr(Y_E[(ii, t, g, s)] - quicksum(Y_LT[(ii, to, t, g, s)] for to in range(1, t)) >= 0, name='')
+                        real.addConstr(Y_E[(ii, t, g, s)] - quicksum(Y_LT[(ii, to, t, g, s)] for to in range(1, t)) >= 0, name='')
 
                         # Prohibited transfer to self
-                        self.real.addConstr(Y_LT[(ii, t, t, g, s)] == 0, name='')
+                        real.addConstr(Y_LT[(ii, t, t, g, s)] == 0, name='')
 
                         # ES charging/discharging constraints
-                        self.real.addConstr((UB1[1] + (ii - 1) * UB2[1]) * U_E[(ii, t, g, s)] -
+                        real.addConstr((UB1[1] + (ii - 1) * UB2[1]) * U_E[(ii, t, g, s)] -
                                            (Y_ESL[(ii, t, g, s)] + Y_ESGrid[(ii, t, g, s)]) >= 0, name='')
-                        self.real.addConstr((UB1[1] + (ii - 1) * UB2[1]) * (1 - U_E[(ii, t, g, s)]) -
+                        real.addConstr((UB1[1] + (ii - 1) * UB2[1]) * (1 - U_E[(ii, t, g, s)]) -
                                            (Y_PVES[(ii, t, g, s)] + Y_GridES[(ii, t, g, s)] + Y_DGES[(ii, t, g, s)]) >= 0, name='')
 
-                        self.real.addConstr(
+                        real.addConstr(
                             (UB1[1] + UB1[2] + UB1[3] + (ii - 1) * (UB2[1] + UB2[2] + UB2[3])) * U_G[(ii, t, g, s)] -
                             (Y_ESGrid[(ii, t, g, s)] + Y_PVGrid[(ii, t, g, s)] + Y_DGGrid[(ii, t, g, s)]) >= 0,
                             name='')
-                        self.real.addConstr(
+                        real.addConstr(
                             (UB1[1] + UB1[2] + UB1[3] + (ii - 1) * (UB2[1] + UB2[2] + UB2[3])) * (1 - U_G[(ii, t, g, s)]) -
                             (Y_GridES[(ii, t, g, s)] + Y_GridL[(ii, t, g, s)]) >= 0, name='')
 
                         # Prohibited transaction with the grid during outage
                         if Out_Time[(g, s)] != 0:
                             for ot in Out_Time[(g, s)]:
-                                self.real.addConstr(Y_GridL[(ii, ot, g, s)] + Y_GridES[(ii, ot, g, s)] == 0, name='')
-                                self.real.addConstr(Y_PVGrid[(ii, ot, g, s)] + Y_ESGrid[(ii, ot, g, s)] +
+                                real.addConstr(Y_GridL[(ii, ot, g, s)] + Y_GridES[(ii, ot, g, s)] == 0, name='')
+                                real.addConstr(Y_PVGrid[(ii, ot, g, s)] + Y_ESGrid[(ii, ot, g, s)] +
                                                    Y_DGGrid[(ii, ot, g, s)] == 0, name='')
+                                real.addConstrs(U_G[(ii, ot, g, s)] == 0)
 
                     for t in RNGTimeMinus:
                         # Balance of power flow
-                        self.real.addConstr(Y_E[(ii, t + 1, g, s)] ==
+                        real.addConstr(Y_E[(ii, t + 1, g, s)] ==
                                            Y_E[(ii, t, g, s)] +
                                            ES_gamma * (Y_PVES[(ii, t, g, s)] + Y_DGES[(ii, t, g, s)] + Eta_c * Y_GridES[(ii, t, g, s)]) -
                                            (Eta_i / ES_gamma) * (Y_ESL[(ii, t, g, s)] + Y_ESGrid[(ii, t, g, s)]), name='')
@@ -690,7 +466,7 @@ class DetModel:
                             # Curtailment cost
                             Costs += PVCurPrice * (Y_PVCur[(ii, t, g, s)] + Y_DGCur[(ii, t, g, s)])
                             # Losing load cost
-                            Costs += quicksum(VoLL[h] * Y_LL[(ii, h, t, g, s)] for h in RNGHouse)
+                            Costs += VoLL * Y_LL[(ii, t, g, s)]
                             # DG cost
                             Costs += DGEffic * (Y_DGL[(ii, t, g, s)] + Y_DGGrid[(ii, t, g, s)] +
                                                 Y_DGCur[(ii, t, g, s)] + Y_DGES[(ii, t, g, s)])
@@ -705,23 +481,23 @@ class DetModel:
                             Costs += TransPrice * quicksum(Y_LT[(ii, to, t, g, s)] for to in RNGTime)
 
                 Total_cost += Probs[s] * GenPar * Costs
-            self.real.setObjective(Total_cost + Capital, sense=GRB.MINIMIZE)
+            real.setObjective(Total_cost + Capital, sense=GRB.MINIMIZE)
 
         '''Save model data'''
         if True:
-            self.real.write(f'Models/real.mps')
-            print(self.real)
+            real.write(f'Models/real.mps')
+            print(real)
 
 
 if __name__ == '__main__':
-    mp = MasterPro()
+    X_keys = MasterProb()
     for scen in Probs.keys():
         if scen < 3:
-            sp = SubProb(scen)
+            Y_keys, Y_intk = SubProb(scen)
         else:
             break
     with open(f'Models/Indices.pkl', 'wb') as f:
-        pickle.dump([mp.X_keys, sp.Y_keys, sp.int_var_keys], f)
+        pickle.dump([X_keys, Y_keys, Y_intk], f)
     f.close()
     # real = DetModel()
 

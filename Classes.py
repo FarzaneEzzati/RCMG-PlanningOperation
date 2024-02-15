@@ -10,10 +10,6 @@ with open(f'Models/Indices.pkl', 'rb') as f:
     X_keys, Y_keys, Y_int_keys = pickle.load(f)
 f.close()
 
-'''Open all ranges'''
-with open('Data/Ranges.pkl', 'rb') as handle:
-    RNGLoc, RNGDvc, RNGTime, RNGMonth, RNGHouse, RNGScen, RNGSta, Y_itg, Y_ihtg, Y_ittg = pickle.load(handle)
-handle.close()
 with open('Data/OutageScenarios.pkl', 'rb') as handle:
     scens, probs = pickle.load(handle)
 handle.close()

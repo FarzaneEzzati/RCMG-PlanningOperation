@@ -13,86 +13,116 @@ env.setParam('OutputFlag', 0)
 class CGLP:
     def __init__(self, master, sub, T2, x_k, y_d):
         self.sub, self.T2 = sub, T2
-        self.T, self.W, self.r = sub.ReturnT_W_r()
-        self.x_k = x_k
-        ub_2 = {t2: T2[t2].ub for t2 in self.T2.keys()}
-        lb_2 = {t2: T2[t2].lb for t2 in self.T2.keys()}
-        A_1, b_1, ub_1, lb_1 = master.A, master.b, master.ub, master.lb
-        A_cons = master.master.getConstrs()
-        sub_cons = sub.sub.getConstrs()
-        self.L2_length = len(sub_cons)
-        self.L1_length = len(A_cons)
+        self.x_k, self.y_d = x_k, y_d
+
+
+        # Get A and b from master
+        constrs_coefs_1 = IndexUp(master.master.getA().todok())
+        constr_1 = master.master.getConstrs()
+
+        benders_cuts_cuont = sum([1 for c in constr_1 if 'Benders' in c.ConstrName])
+
+        if benders_cuts_cuont == len(constr_1):
+            A_1 = None
+            b_1 = None
+        else:
+            A_length = len(constr_1) - benders_cuts_cuont
+            A_1, b_1 = {}, {}
+            for key in constrs_coefs_1:
+                if key[0] <= A_length:
+                    A_1[key] = constrs_coefs_1[key]
+                    b_1[key[0]] = constr_1[key[0] - 1].RHS
+
+
+        b_1 = {constr_1.index(c) + 1: c.RHS for c in constr_1}
+        ub_1 = {x: master.X[x].UB for x in master.X}
+        lb_1 = {x: master.X[x].LB for x in master.X}
+
+        # Get A and b for sub
+        A_2 = IndexUp(sub.sub.getA().todok())
+        constr_2 = sub.sub.getConstrs()
+        b_2 = {constr_2.index(c) + 1: c.RHS for c in constr_2}
+        ub_2 = {t2: {y: self.T2[t2].Y[y].UB for y in self.T2[t2].Y} for t2 in self.T2}
+        lb_2 = {t2: {y: self.T2[t2].Y[y].LB for y in self.T2[t2].Y} for t2 in self.T2}
+        self.L1_length = len(constr_1)
+        self.L2_length = len(constr_2)
+
         pi_limit = 1
 
         self.cglp = gp.Model('CGLP', env=env)
-        L1 = self.cglp.addVars(range(1, self.L1_length + 1), lb=0, name='L1')
-        self.L2 = {t2: self.cglp.addVars(range(1, self.L2_length + 1), name='L2') for t2 in T2.keys()}
-        self.Mu1 = self.cglp.addVars(master.X.keys(), lb=0, name='Mu1')
-        self.Nu1 = self.cglp.addVars(master.X.keys(), lb=0, name='Nu1')
-        self.Mu2 = {t2: self.cglp.addVars(sub.Y.keys(), lb=0, name='Mu2') for t2 in T2.keys()}
-        self.Nu2 = {t2: self.cglp.addVars(sub.Y.keys(), lb=0, name='Nu2') for t2 in T2.keys()}
+        self.L1 = self.cglp.addVars(range(1, self.L1_length + 1), name='L1')
+        self.L2 = {t2: self.cglp.addVars(range(1, self.L2_length + 1), name='L2') for t2 in T2}
+        self.Mu1 = self.cglp.addVars(master.X, lb=0, name='Mu1')
+        self.Nu1 = self.cglp.addVars(master.X, lb=0, name='Nu1')
+        self.Mu2 = {t2: self.cglp.addVars(sub.Y, lb=0, name='Mu2') for t2 in self.T2}
+        self.Nu2 = {t2: self.cglp.addVars(sub.Y, lb=0, name='Nu2') for t2 in self.T2}
         self.PI0 = self.cglp.addVar(lb=-pi_limit, ub=pi_limit, name='P0')
-        self.PI1 = self.cglp.addVars(sub.X.keys(), lb=-pi_limit, ub=pi_limit, name='P1')
-        self.PI2 = self.cglp.addVars(sub.Y.keys(), lb=-pi_limit, ub=pi_limit, name='P2')
+        self.PI1 = self.cglp.addVars(sub.X, lb=-pi_limit, ub=pi_limit, name='P1')
+        self.PI2 = self.cglp.addVars(sub.Y, lb=-pi_limit, ub=pi_limit, name='P2')
 
-        for c in A_cons:
+        for c in constr_1:
             if c.Sense == '=':
-                L1[A_cons.index(c) + 1].LB = -GRB.INFINITY
-        for c in sub_cons:
+                self.L1[constr_1.index(c) + 1].LB = -100000
+                # self.L1[constr_1.index(c) + 1].UB = 0
+        for c in constr_2:
             if c.Sense == '=':
-                for t2 in self.T2.keys():
-                    self.L2[t2][sub_cons.index(c) + 1].LB = -GRB.INFINITY
+                for t2 in self.T2:
+                    self.L2[t2][constr_2.index(c) + 1].LB = -100000
+                    # self.L2[t2][constr_2.index(c) + 1].UB = 0
 
-        self.rL2 = {t2: quicksum(self.r[key] * self.L2[t2][key] for key in self.r.keys()) for t2 in T2.keys()}
-        self.MuLo = {t2: quicksum(lb_2[t2][key] * self.Mu2[t2][key] for key in sub.Y.keys()) for t2 in T2.keys()}
-        self.NuUp = {t2: quicksum(ub_2[t2][key] * self.Nu2[t2][key] for key in sub.Y.keys()) for t2 in T2.keys()}
+        self.bL2 = {t2: quicksum(b_2[key] * self.L2[t2][key] for key in b_2) for t2 in self.T2}
+        self.MuLo2 = {t2: quicksum(lb_2[t2][key] * self.Mu2[t2][key] for key in sub.Y) for t2 in self.T2}
+        self.NuUp2 = {t2: quicksum(ub_2[t2][key] * self.Nu2[t2][key] for key in sub.Y) for t2 in self.T2}
 
-        self.bL1 = quicksum(b_1[key] * L1[key] for key in b_1.keys())
-        self.MuLo1 = quicksum(lb_1[key] * self.Mu1[key] for key in sub.X.keys())
-        self.NuUp1 = quicksum(ub_1[key] * self.Nu1[key] for key in sub.X.keys())
 
-        self.TL2 = {t2: {x_key: 0 for x_key in sub.X.keys()} for t2 in self.T2.keys()}
-        for t2 in T2.keys():
-            for key in self.T.keys():
-                self.TL2[t2][key[1]] += self.T[key] * self.L2[t2][key[0]]
+        self.MuLo1 = quicksum(lb_1[key] * self.Mu1[key] for key in sub.X)
+        self.NuUp1 = quicksum(ub_1[key] * self.Nu1[key] for key in sub.X)
 
-        self.AL1 = {x_key: 0 for x_key in sub.X.keys()}
-        for key in A_1.keys():
-            self.AL1[key[1]] += A_1[key] * L1[key[0]]
+        self.TL2 = {t2: {x: 0 for x in sub.X} for t2 in self.T2}
+        self.WL2 = {t2: {y: 0 for y in sub.Y} for t2 in self.T2}
+        for t2 in T2:
+            for key in A_2:
+                if key[1] in sub.X:
+                    self.TL2[t2][key[1]] += A_2[key] * self.L2[t2][key[0]]
+                else:
+                    self.WL2[t2][key[1]] += A_2[key] * self.L2[t2][key[0]]
 
-        self.WL2 = {t2: {y_key: 0 for y_key in sub.Y.keys()} for t2 in self.T2.keys()}
-        for t2 in self.T2.keys():
-            for key in self.W.keys():
-                self.WL2[t2][key[1]] += self.W[key] * self.L2[t2][key[0]]
+        self.AL1 = {x: 0 for x in sub.X}
+        self.bL1 = 0
+        if A_1 is not None:
+            for key in A_1:
+                self.AL1[key[1]] += A_1[key] * self.L1[key[0]]
+            self.bL1 = quicksum(b_1[key] * self.L1[key] for key in b_1)
+
         self.SetConstrs()
         self.cglp.setObjective(self.PI0 -
-                              quicksum(self.PI1[x_key] * self.x_k[x_key] for x_key in sub.X.keys()) -
-                              quicksum(self.PI2[y_key] * y_d[y_key] for y_key in sub.Y.keys()),
+                              quicksum(self.PI1[x] * self.x_k[x] for x in sub.X) -
+                              quicksum(self.PI2[y] * y_d[y] for y in sub.Y),
                               sense=GRB.MAXIMIZE)
         self.cglp.update()
 
 
     def UpdateModel(self, pi0, pi1, pi2, y_d):
         self.L2_length += 1
-        for t2 in self.T2.keys():
+        for t2 in self.T2:
             self.L2[t2][self.L2_length] = self.cglp.addVar(name='L2')
-            self.rL2[t2] += pi0 * self.L2[t2][self.L2_length]
-            for pi1_key in pi1.keys():
+            self.bL2[t2] += pi0 * self.L2[t2][self.L2_length]
+            for pi1_key in pi1:
                 self.TL2[t2][pi1_key] += pi1[pi1_key] * self.L2[t2][self.L2_length]
-            for pi2_key in pi2.keys():
+            for pi2_key in pi2:
                 self.WL2[t2][pi2_key] += pi2[pi2_key] * self.L2[t2][self.L2_length]
         self.cglp.remove(self.cglp.getConstrs())
         self.SetConstrs()
         self.cglp.setObjective(self.PI0 -
-                          quicksum(self.PI1[x_key] * self.x_k[x_key] for x_key in self.sub.X.keys()) -
-                          quicksum(self.PI2[y_key] * y_d[y_key] for y_key in self.sub.Y.keys()), sense=GRB.MAXIMIZE)
+                          quicksum(self.PI1[x] * self.x_k[x] for x in self.sub.X) -
+                          quicksum(self.PI2[y] * y_d[y] for y in self.sub.Y), sense=GRB.MAXIMIZE)
         self.cglp.update()
 
     def SetConstrs(self):
-        self.cglp.addConstrs((self.PI0 == self.bL1 + self.rL2[t2] + self.MuLo[t2] - self.NuUp[t2] + self.MuLo1 - self.NuUp1
-                        for t2 in self.T2.keys()), name='pi0')
-        self.cglp.addConstrs((self.PI1[x_key] == self.AL1[x_key] + self.TL2[t2][x_key] + self.Mu1[x_key] - self.Nu1[x_key]
-                        for t2 in self.T2.keys() for x_key in self.sub.X.keys()), name='pi1')
-        self.cglp.addConstrs((self.PI2[y_key] == self.WL2[t2][y_key] + self.Mu2[t2][y_key] - self.Nu2[t2][y_key]
-                        for t2 in self.T2.keys() for y_key in self.sub.Y.keys()), name='pi2')
+        self.cglp.addConstrs((self.PI0 >= self.bL1 + self.bL2[t2] + self.MuLo2[t2] + self.NuUp2[t2] + self.MuLo1 + self.NuUp1
+                        for t2 in self.T2), name='pi0')
+        self.cglp.addConstrs((self.PI1[x] <= self.AL1[x] + self.TL2[t2][x] + self.Mu1[x] - self.Nu1[x]
+                        for t2 in self.T2 for x in self.sub.X), name='pi1')
+        self.cglp.addConstrs((self.PI2[y] <= self.WL2[t2][y] + self.Mu2[t2][y] - self.Nu2[t2][y]
+                        for t2 in self.T2 for y in self.sub.Y), name='pi2')
         self.cglp.update()
