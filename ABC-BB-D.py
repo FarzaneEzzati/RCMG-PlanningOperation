@@ -29,10 +29,10 @@ if __name__ == '__main__':
     v_list = []
     T1, T1_v, T1_x = {0: root_model}, {0: ObjVal}, {0: X}
 
-    SP = {0: {}}
+    SP = {}
     for scen in Probs:
         s_model = gp.read(f'Models/Sub{scen}.mps', env=env)
-        SP[0][scen] = SubProb(s_model, X_keys, Y_keys, Y_int_keys)
+        SP[scen] = SubProb(s_model, X_keys, Y_keys, Y_int_keys)
 
     k, t, t_last = 1, {}, 0  # Iteration number
 
