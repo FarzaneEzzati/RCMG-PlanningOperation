@@ -9,14 +9,7 @@ def DictMin(Dict):
     return min_key
 
 
-def XInt(x):
-    # The output is a list of touples.
-    # The first element in the touple shows row index and the second shows the column index of non-integer.
-    non_integer = []
-    for key in x.keys():
-        if x[key] != int(x[key]):
-            non_integer.append(key)
-    return non_integer
+
 
 
 def YInt(y):

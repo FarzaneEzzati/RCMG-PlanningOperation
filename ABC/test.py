@@ -11,7 +11,7 @@ import gurobipy as gp
 from gurobipy import GRB
 
 master = gp.Model()
-X = master.addVars((1, 2), ub=1, name='X')
+X = master.addVars((1, 2), ub=3, name='X')
 eta = master.addVar(lb=-100000, name='eta')
 A = {}
 b = {}
@@ -23,7 +23,7 @@ Y_keys = [3, 4, 5, 6, 7]
 Y_int_keys = [3, 4, 5, 6]
 
 sub1 = gp.Model()
-X = sub1.addVars((1, 2), ub=1, name='X')
+X = sub1.addVars((1, 2), name='X')
 Y = sub1.addVars((1, 2, 3, 4), ub=1, name='Y')
 R = sub1.addVar(lb=0, ub=10, name='R')
 sub1.addConstr(-(2 * Y[1] + 3 * Y[2] + 4 * Y[3] + 5 * Y[4]) + R >= -10 + X[1], name='C1')
@@ -38,7 +38,7 @@ sub1.write('Models/Sub1.mps')
 
 
 sub2 = gp.Model()
-X = sub2.addVars((1, 2), ub=1, name='X')
+X = sub2.addVars((1, 2), name='X')
 Y = sub2.addVars((1, 2, 3, 4), ub=1, name='Y')
 R = sub2.addVar(lb=0, ub=10, name='R')
 sub2.addConstr(-(2 * Y[1] + 3 * Y[2] + 4 * Y[3] + 5 * Y[4]) + R >= -5 + X[1], name='C1')
