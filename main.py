@@ -16,7 +16,7 @@ env.setParam('DualReductions', 0)
 with open('Data/ScenarioProbabilities.pkl', 'rb') as handle:
     Probs = pickle.load(handle)
 handle.close()
-Probs = [Probs[1], Probs[2], Probs[3], Probs[4] ]
+Probs = [Probs[1], Probs[2]]
 
 with open('Models/Master_X_Info.pkl', 'rb') as handle:
     Xkeys = pickle.load(handle)
@@ -27,7 +27,7 @@ handle.close()
 
 SP, TMatrices, rVectors = {}, {}, {}
 print('Load Subproblems')
-for scen in tqdm(range(4)):
+for scen in tqdm(range(2)):
     SP[scen] = gp.read(f'Models/Sub{scen+1}.mps', env=env2)
     with open(f'Models/Sub{scen+1}-Tr.pkl', 'rb') as handle:
         TMatrix, rVector = pickle.load(handle)

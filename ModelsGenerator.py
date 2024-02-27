@@ -88,7 +88,6 @@ Years = 20
 ReInvsYear = 10
 Operational_Rate = 0.01
 PA_Factor = ((1 + Operational_Rate) ** Years - 1) / (Operational_Rate * (1 + Operational_Rate) ** Years)
-print(PA_Factor)
 Labor_Factor = 0.12
 C = {1: (1+Labor_Factor)* 151, 2: (1+Labor_Factor)*2780, 3: (1+Labor_Factor)*400}  # order is: [ES, PV, DG]
 CO = {i: C[i] * (1 + Operational_Rate * PA_Factor) for i in (1, 2, 3)}
@@ -504,12 +503,12 @@ class DetModel:
 
 
 if __name__ == '__main__':
-    #MasterProb()
+    MasterProb()
 
-    for scen in tqdm.tqdm(norm_probs):
+    '''for scen in tqdm.tqdm(norm_probs):
         SubProb(scen)
-        if scen == 4:
-            break
+        if scen == 2:
+            break'''
     # real = DetModel()
 
 
