@@ -1,56 +1,107 @@
 import pickle
-
 import pandas as pd
-
+import numpy as np
 from MasterSubProbs import MasterProb, SubProb
 import random
 from static_functions import DictMin, IndexUp
 import gurobipy as gp
 import matplotlib.pyplot as plt
+from tqdm import tqdm
+import time
 env = gp.Env()
-env.setParam('OutputFlag', 0)
+env2 = gp.Env()
+env2.setParam('OutputFlag', 0)
 env.setParam('DualReductions', 0)
 
+with open('Data/ScenarioProbabilities.pkl', 'rb') as handle:
+    Probs = pickle.load(handle)
+handle.close()
+Probs = [Probs[1], Probs[2], Probs[3], Probs[4] ]
 
-def XInt(x):
-    not_integer_keys = []
-    for key in x.keys():
-        if x[key] != int(x[key]):
-            not_integer_keys.append(key)
-    return not_integer_keys
+with open('Models/Master_X_Info.pkl', 'rb') as handle:
+    Xkeys = pickle.load(handle)
+handle.close()
 
+
+
+
+SP, TMatrices, rVectors = {}, {}, {}
+print('Load Subproblems')
+for scen in tqdm(range(4)):
+    SP[scen] = gp.read(f'Models/Sub{scen+1}.mps', env=env2)
+    with open(f'Models/Sub{scen+1}-Tr.pkl', 'rb') as handle:
+        TMatrix, rVector = pickle.load(handle)
+    handle.close()
+    TMatrices[scen] = TMatrix
+    rVectors[scen] = rVector
+
+    '''AMatrix = s_model.getA().todok()
+    Constrs = s_model.getConstrs() 
+
+    possibleTkeys = [(r, x) for r in range(len(Constrs)) for x in Xkeys]
+    TMatrices.append({key: AMatrix[key] for key in possibleTkeys if key in AMatrix.keys()})
+    rVectors.append({c: Constrs[c].RHS for c in range(len(Constrs))})'''
+
+
+def GetPIs(X_values):
+    PIs = {}
+    for scen in SP:
+        vars = SP[scen].getVars()
+        for x in Xkeys:
+            vars[x].UB = X_values[x]
+            vars[x].LB = X_values[x]
+        SP[scen].update()
+        SP[scen].optimize()
+
+        if SP[scen].status == 2:
+            constrs = SP[scen].getConstrs()
+            PIs[scen] = [constrs[c].Pi for c in range(len(constrs))]
+
+    pir = [Probs[scen] * sum(PIs[scen][row] * rVectors[scen][row] for row in range(len(rVectors[scen])))
+        for scen in range(len(Probs))]
+    e = sum(pir)
+    E = [[0 for x in Xkeys] for _ in range(len(Probs))]
+    for scen in range(len(Probs)):
+        for key in TMatrices[scen].keys():
+            #print(key)
+            E[scen][key[1]] += PIs[scen][key[0]] * TMatrices[scen][key]
+    E = [sum(E[scen][x] * Probs[scen] for scen in range(len(Probs))) for x in Xkeys]
+    return E, e  
+
+
+def mycallback(model, where): 
+    if where == gp.GRB.Callback.MIPSOL:
+        X = model.cbGetSolution(model._vars)
+        # Get solutions in subproblems, calculate e and E
+        E, e = GetPIs(X)
+        # Add a cut based on the solution # For example, adding a simple cut: 
+        model.cbLazy(model._vars[-1] + sum(model._vars[x] * E[x] for x in Xkeys) >= e)
+
+        
 
 if __name__ == '__main__':
-    with open('Models/Master_X_Info.pkl', 'rb') as handle:
-        Xkeys = pickle.load(handle)
-    handle.close()
+    test = False
+    if test:
+        pass
+    else:
+        master = gp.read('Models/Master.mps', env=env)
+        master._vars = master.getVars()
+        master.Params.LazyConstraints = 1
+        master.Params.MIPGap = 0.05
+        master.Params.TimeLimit = 600
+        start = time.time()
+        master.optimize(mycallback)
+        finish = time.time()
+        optimal_solution = [x.x for x in master.getVars()]
+        total_cost = master.ObjVal
+        print(optimal_solution)
 
-    with open('Data/ScenarioProbabilities.pkl', 'rb') as handle:
-        Probs = pickle.load(handle)
-    handle.close()
-    # temporary
-    Probs = {1: Probs[1], 2: Probs[2]}
 
-    m_model = gp.read('Models/Master.mps', env=env)
-    master_model = MasterProb(m_model, Xkeys)
-    master_solution = master_model.Solve()
 
-    X, ObjVal = master_solution[0], master_solution[1]
-    X_star, ObjVal_star = None, None
-    v_relaxation, V_incumbent = -10e10, 10e10
 
-    v_list, V_list = [], []
-    Tree, Treev, Treex = {0: master_model}, {0: ObjVal}, {0: X}
-
-    SP = {}
-    for scen in Probs:
-        s_model = gp.read(f'Models/Sub{scen}.mps', env=env)
-        SP[scen] = SubProb(s_model)
-
-    k, t, t_last = 1, {}, 0  # Iteration number
+    '''k, t, t_last = 1, {}, 0  # Iteration number
     epsilon1 = 0.1   # Stopping tolerance
-    epsilon2 = 0.1
-    cw = 20
+
     print_format = "{:<5} {:<10} {:<15} {:<20} {:<20} {:<8}"
     print(print_format.format('Itr', 'TreeSize', 'NodesExplored', 'LowerBound', 'UpperBound', 'OptimalityGap'))
 
@@ -92,14 +143,28 @@ if __name__ == '__main__':
             for sp in SP:
                 PIs[sp], ObjVals[sp] = SP[sp].SolveForBenders(Treex[t[k]])
 
-            Tree[t[k]].AddBendersCut(PIs, SP, Probs)
+            Tree[t[k]].AddBendersCut(PIs, SP, TMatrices, rVectors, Probs)
             master_solution = Tree[t[k]].Solve()
+
+            if master_solution[1] > v_relaxation:
+                v_relaxation = master_solution[1]
+
             if master_solution[0] == Treex[t[k]]:
                 if master_solution[1] < V_incumbent:
                     X_star = master_solution[0]
                     ObjVal_star = master_solution[1]
                     V_incumbent = master_solution[1]
-                    V_list = V_incumbent
+                    V_list.append(V_incumbent)
+
+                    nodes_to_remove = []
+                    for key in Tree.keys():
+                        if Treev[key] > V_incumbent:
+                            nodes_to_remove.append(key)
+                    for n in nodes_to_remove:
+                        del Tree[n]
+                        del Treex[n]
+                        del Treev[n]
+
                 del Tree[t[k]]
                 del Treex[t[k]]
                 del Treev[t[k]]
@@ -111,18 +176,17 @@ if __name__ == '__main__':
                     del Treex[t[k]]
                     del Treev[t[k]]
 
+
             if V_incumbent * v_relaxation < 0:
                 Gap = 1000
             else:
                 Gap = 100 * (V_incumbent - v_relaxation) / abs(V_incumbent)
 
-            print(print_format.format(k, len(Tree), t_last, v_relaxation, V_incumbent, Gap))
+            print(print_format.format(k, len(Tree), t_last+1, v_relaxation, V_incumbent, Gap))
             k += 1
         else:
-            break
-    print(f'Optimal Solution is: {X_star}')
-    pd.DataFrame({'Lower Bound': v_list,
-                 'Upper Bound': V_list}).to_csv('BendersUpperLower.csv')
+            break'''
+
 
 
 

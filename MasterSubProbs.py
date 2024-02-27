@@ -29,55 +29,47 @@ class MasterProb:
         else:
             self.X[x].LB = int(bound) + 1
         self.master.update()
-    def AddBendersCut(self, PIs, SP, Probs):
-        TMatrix = {sp: {} for sp in SP}
-        rVector = {sp: {} for sp in SP}
-        for sp in SP:
-            AMatrix = IndexUp(SP[sp].sub.getA().todok())
-            Constrs = SP[sp].sub.getConstrs()
-            for key in AMatrix:
-                if key[1] in SP[sp].X:
-                    TMatrix[sp][key] = AMatrix[key]
-            for c in Constrs:
-                rVector[sp][Constrs.index(c) + 1] = c.RHS
 
-        pir = {sp: Probs[sp] * sum(PIs[sp][row] * rVector[sp][row] for row in rVector[sp])
-               for sp in Probs}
+    def AddBendersCut(self, PIs, SP, TMatrices, rVectors, Probs):
+        pir = {sp: Probs[sp] * sum(PIs[sp][row] * rVectors[sp][row] for row in rVectors[sp].keys())
+               for sp in Probs.keys()}
         e = sum(pir.values())
-        E = {sp: {x: 0 for x in self.X} for sp in Probs}
-        for sp in Probs:
-            for key in TMatrix[sp]:
-                E[sp][key[1]] += PIs[sp][key[0]] * TMatrix[sp][key]
-        E = {x: sum(E[sp][x] * Probs[sp] for sp in Probs) for x in self.X}
-        self.master.addConstr(self.eta + quicksum(self.X[x] * E[x] for x in self.X) >= e, name='Benders')
+        E = {sp: {x: 0 for x in self.X.keys()} for sp in Probs.keys()}
+        for sp in Probs.keys():
+            for key in TMatrices[sp].keys():
+                #print(key)
+                E[sp][key[1]] += PIs[sp][key[0]] * TMatrices[sp][key]
+        E = {x: sum(E[sp][x] * Probs[sp] for sp in Probs.keys()) for x in self.X.keys()}
+        self.master.addConstr(self.eta + quicksum(self.X[x] * E[x] for x in self.X.keys()) >= e, name='Benders')
         # print(self.eta + quicksum(self.X[x] * E[x] for x in self.X) >= e)
         self.master.update()
 
 
 class SubProb:
-    def __init__(self, model):
+    def __init__(self, model, Xkeys):
         # Save the model in the class
         self.sub = model
         all_vars = self.sub.getVars()
-        self.X = {i: all_vars[i] for i in range(len(all_vars)) if 'X' in all_vars[i].VarName}
+        self.X = {i: all_vars[i] for i in Xkeys}
         self.sub.update()
 
-    def SolveForBenders(self, x_k):
+    def SolveForBenders(self, xx):
         PI = None
         for x in self.X:
-            self.X[x].UB = x_k[x]
-            self.X[x].LB = x_k[x]
+            self.X[x].UB = xx[x]
+            self.X[x].LB = xx[x]
         self.sub.update()
         self.sub.optimize()
-
+ 
         if self.sub.status == 2:
             constrs = self.sub.getConstrs()
-            PI = {constrs.index(c)+1: c.Pi for c in constrs}
+            PI = {c: constrs[c].Pi for c in range(len(constrs))}
         else:
+
             self.sub.computeIIS()
             for c in self.sub.getConstrs():
                 if c.IISConstr:
                     print(c.ConstrName)
             raise ValueError('Scenario infeasible')
-        return PI, self.sub.ObjVal
+        return PI
 

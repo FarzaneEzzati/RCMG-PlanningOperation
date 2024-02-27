@@ -5,6 +5,9 @@ import pandas as pd
 import numpy as np
 import gurobipy as gp
 from gurobipy import quicksum, GRB
+import tqdm 
+import warnings
+warnings.filterwarnings('ignore')
 
 env = gp.Env()
 env.setParam('OutputFlag', 0)
@@ -37,6 +40,7 @@ if True:
             de_single = de[cols].iloc[i - 1]
             week_long = pd.concat([dw_single, dw_single, dw_single, dw_single, dw_single, de_single, de_single])
             week_long_hourly = []
+
             for j in range(1, 169):
                 loc = (j-1)*4
                 summ = sum(week_long[loc + k] for k in range(4))
@@ -59,7 +63,7 @@ with open('Data/ScenarioProbabilities.pkl', 'wb') as handle:
 handle.close()
 
 # Counts
-T = 20  # count of hours per week
+T = 168  # count of hours per week
 LCount = 10  # count of locations
 DVCCount = 3  # count of devices
 MCount = 12  # count of months
@@ -84,9 +88,11 @@ Years = 20
 ReInvsYear = 10
 Operational_Rate = 0.01
 PA_Factor = ((1 + Operational_Rate) ** Years - 1) / (Operational_Rate * (1 + Operational_Rate) ** Years)
-C = {1: 600, 2: 2780, 3: 400}  # order is: [ES, PV, DG]
-CO = {i: C[i] * (1 + PA_Factor) for i in (1, 2, 3)}
-LocationPrice = {i: 200 for i in RNGLoc}
+print(PA_Factor)
+Labor_Factor = 0.12
+C = {1: (1+Labor_Factor)* 151, 2: (1+Labor_Factor)*2780, 3: (1+Labor_Factor)*400}  # order is: [ES, PV, DG]
+CO = {i: C[i] * (1 + Operational_Rate * PA_Factor) for i in (1, 2, 3)}
+LocationPrice = {i: 2000 for i in RNGLoc}
 F = {(i, j): LocationPrice[j] for j in LocationPrice for i in RNGSta}
 
 UB = {(1, 1): 1000, (1, 2): 1000, (1, 3): 400,
@@ -98,17 +104,25 @@ ES_gamma = 0.85
 DG_gamma = 0.4  # gal/kW
 FuelPrice = 3.61  # $/gal
 DGEffic = DG_gamma * FuelPrice  # Fuel cost of DG: $/kWh
+ES_d = 0.02
 
 zeta = 0.8
 GridPlus = 0.1812  # $/kWh
-GridMinus = 0.1207
+GridMinus = 0.1407
 LoadPrice = zeta * GridPlus
 PVCurPrice = GridMinus
 DGCurPrice = GridMinus + DGEffic
 
-VoLL = 1.59 * GridPlus
+VoLL_sensitivity = 10
+VoLL = 1.59 * VoLL_sensitivity * GridPlus 
+VoLL_hourly = []
 TransMax = 0.3  # %
-TransPrice = TransMax * VoLL
+TransPrice = VoLL * TransMax
+for t in RNGTime:
+    if t in DontTran:
+        VoLL_hourly.append(VoLL)
+    else:
+        VoLL_hourly.append((1-TransMax) * VoLL)
 
 SOC_UB, SOC_LB = 0.9, 0.1
 eta_i = 0.9
@@ -133,8 +147,8 @@ eta_M = -10000000
 def MasterProb():
     master = gp.Model('MasterProb', env=env)
     '''Investment'''
-    X = master.addVars(X_ild, name='X')
-    U = master.addVars(X_il, lb=0, ub=1, name='U')
+    X = master.addVars(X_ild, vtype=GRB.INTEGER, name='X')
+    U = master.addVars(X_il, lb=0, ub=1, vtype=GRB.BINARY, name='U')
     master.update()
     # Investment constraint
     master.addConstr(-quicksum(F[(1, l)] * U[(1, l)] for l in RNGLoc) -
@@ -194,7 +208,6 @@ def SubProb(scen):
         Y_DGGrid = sub.addVars(Y_itg, name=f'Y_PVGrid')  # Dg to Grid
         Y_ESGrid = sub.addVars(Y_itg, name=f'Y_ESGrid')  # ES to Grid
         Y_E = sub.addVars(Y_itg, name=f'Y_E')  # ES level of energy
-        Y_LH = sub.addVars(Y_itg, name=f'Y_LH')  # Load served
         Y_LL = sub.addVars(Y_itg, name=f'Y_LL')  # Load lost
         Y_LT = sub.addVars(Y_ittg, name=f'Y_LT')  # Load transferred
 
@@ -204,28 +217,33 @@ def SubProb(scen):
         L = {(i, t, g): (1 + (i-1) * AG_scens[scen]/100) * Load_scens[scen][g][t - 1]
              for i in RNGSta for t in RNGTime for g in RNGMonth}
 
-        PV = {(t, g): (0.5 + 0.05 * scen) * PV_scens[f'Month {g}'].iloc[t - 1] for t in RNGTime for g in RNGMonth}
+        PV = {(t, g): PV_scens[f'Month {g}'].iloc[t - 1] for t in RNGTime for g in RNGMonth}
 
         Out_Time = {g: 0 for g in RNGMonth}
         if Outage_scens[scen] != 0:
-            for g in RNGMonth:
-                Out_Time[g] = [OutageStart + j for j in range(int(Outage_scens[scen]))]
+            if Outage_scens[scen] >= 168-OutageStart:
+                for g in RNGMonth:
+                    Out_Time[g] = [OutageStart + j for j in range(168-OutageStart+1)]
+            else:
+                for g in RNGMonth:
+                    Out_Time[g] = [OutageStart + j for j in range(int(Outage_scens[scen]))]
+    
 
     '''Scheduling constraints'''
     for i in RNGSta:  # RNGSta = (1, 2)
         for g in RNGMonth:
             # ES levels
-            sub.addConstr(Y_E[(i, 1, g)] == SOC_LB * quicksum(X[(1, l, 1)] + (i - 1) * X[(2, l, 1)] for l in RNGLoc),
+            sub.addConstr(Y_E[(i, 1, g)] == SOC_LB * sum((1 - (i - 1) * ES_d) ** ReInvsYear * X[(1, l, 1)] + (i - 1) * X[(2, l, 1)] for l in RNGLoc),
                           name='t1')
 
             for t in RNGTime:
                 # Limits on energy level in ES
                 sub.addConstr(
-                    Y_E[(i, t, g)] >= SOC_LB * quicksum(X[(1, l, 1)] + (i - 1) * X[(2, l, 1)] for l in RNGLoc),
+                    Y_E[(i, t, g)] >= SOC_LB * quicksum((1 - (i - 1) * ES_d) ** ReInvsYear * X[(1, l, 1)] + (i - 1) * X[(2, l, 1)] for l in RNGLoc),
                     name='E_LB')
 
                 sub.addConstr(
-                    -Y_E[(i, t, g)] >= -SOC_UB * quicksum(X[(1, l, 1)] + (i - 1) * X[(2, l, 1)] for l in RNGLoc),
+                    -Y_E[(i, t, g)] >= -SOC_UB * quicksum((1 - (i - 1) * ES_d) ** ReInvsYear * X[(1, l, 1)] + (i - 1) * X[(2, l, 1)] for l in RNGLoc),
                     name='E_UB')
 
                 # PV power decomposition
@@ -266,7 +284,7 @@ def SubProb(scen):
                 # ES charging/discharging constraints
                 sub.addConstr(-(Y_ESL[(i, t, g)] + Y_ESGrid[(i, t, g)] +
                                 Y_PVES[(i, t, g)] + Y_DGES[(i, t, g)] + Y_GridES[(i, t, g)]) >=
-                              -quicksum(X[(1, l, 2)] + (i - 1) * X[(2, l, 2)] for l in RNGLoc))
+                              -quicksum((1 - (i - 1) * ES_d) ** ReInvsYear * X[(1, l, 2)] + (i - 1) * X[(2, l, 2)] for l in RNGLoc))
 
                 # Prohibited transaction with the grid during outage
                 if Out_Time[g] != 0:
@@ -284,7 +302,7 @@ def SubProb(scen):
     '''Costs'''
     if True:
         CostInv = PVCurPrice * quicksum(Y_PVCur[itg] + Y_DGCur[itg] for itg in Y_1tg) + \
-                  VoLL * quicksum(Y_LL[itg] for itg in Y_1tg) + \
+                  quicksum(VoLL_hourly[itg[1]-1] * Y_LL[itg] for itg in Y_1tg) + \
                   DGEffic * quicksum(Y_DGL[itg] + Y_DGGrid[itg] + Y_DGCur[itg] + Y_DGES[itg] for itg in Y_1tg) + \
                   GridPlus * quicksum(Y_GridES[itg] for itg in Y_1tg) - \
                   GridMinus * quicksum(Y_PVGrid[itg] + Y_ESGrid[itg] + Y_DGGrid[itg] for itg in Y_1tg) - \
@@ -292,7 +310,7 @@ def SubProb(scen):
                   TransPrice * quicksum(Y_LT[(1, to, t, g)] for to in RNGTime for t in RNGTime for g in RNGMonth)
 
         CostReInv = PVCurPrice * quicksum(Y_PVCur[itg] + Y_DGCur[itg] for itg in Y_2tg) + \
-                  VoLL * quicksum(Y_LL[itg] for itg in Y_2tg) + \
+                  quicksum(VoLL_hourly[itg[1]-1] * Y_LL[itg] for itg in Y_2tg) + \
                   DGEffic * quicksum(Y_DGL[itg] + Y_DGGrid[itg] + Y_DGCur[itg] + Y_DGES[itg] for itg in Y_2tg) + \
                   GridPlus * quicksum(Y_GridES[itg] for itg in Y_2tg) - \
                   GridMinus * quicksum(Y_PVGrid[itg] + Y_ESGrid[itg] + Y_DGGrid[itg] for itg in Y_2tg) - \
@@ -303,6 +321,16 @@ def SubProb(scen):
     sub.setObjective(total_cost, sense=GRB.MINIMIZE)
     sub.update()
     sub.write(f'Models/Sub{scen}.mps')
+    AMatrix = sub.getA().todok()
+    Constrs = sub.getConstrs() 
+
+    Xkeys = range(len(X_ild))
+    possibleTkeys = [(r, x) for r in range(len(Constrs)) for x in Xkeys]
+    TMatrix = {key: AMatrix[key] for key in possibleTkeys if key in AMatrix.keys()}
+    rVector = {c: Constrs[c].RHS for c in range(len(Constrs))}
+    with open(f'Models/Sub{scen}-Tr.pkl', 'wb') as handle:
+        pickle.dump([TMatrix, rVector], handle)
+    handle.close()
 
 
 class DetModel:
@@ -367,16 +395,16 @@ class DetModel:
                 for g in RNGMonth:
                     # ES levels
                     real.addConstr(Y_E[(i, 1, g, s)] == SOC_UB * quicksum(
-                        X[(1, l, 1)] + (i - 1) * X[(2, l, 1)] for l in RNGLoc))
+                        (1-(i-1)*ES_d)**ReInvsYear*X[(1, l, 1)] + (i - 1) * X[(2, l, 1)] for l in RNGLoc))
                     # Only use the summation of ES capacity before/after reinvestment for rhs update in ABC BB-D
 
                     for t in RNGTime:
                         # Limits on energy level in ES
                         real.addConstr(Y_E[(i, t, g, s)] >= SOC_LB * quicksum(
-                            X[(1, l, 1)] + (i - 1) * X[(2, l, 1)] for l in RNGLoc))
+                            (1-(i-1)*ES_d)**ReInvsYear*X[(1, l, 1)] + (i - 1) * X[(2, l, 1)] for l in RNGLoc))
 
                         real.addConstr(-Y_E[(i, t, g, s)] >= -SOC_UB * quicksum(
-                            X[(1, l, 1)] + (i - 1) * X[(2, l, 1)] for l in RNGLoc))
+                            (1-(i-1)*ES_d)**ReInvsYear*X[(1, l, 1)] + (i - 1) * X[(2, l, 1)] for l in RNGLoc))
 
                         # PV power decomposition
                         real.addConstr((Y_PVL[(i, t, g, s)] + Y_PVES[(i, t, g, s)] +
@@ -476,11 +504,14 @@ class DetModel:
 
 
 if __name__ == '__main__':
-    MasterProb()
-    for scen in list(norm_probs.keys())[:2]:
+    #MasterProb()
+
+    for scen in tqdm.tqdm(norm_probs):
         SubProb(scen)
+        if scen == 4:
+            break
     # real = DetModel()
-    pass
+
 
 
 
