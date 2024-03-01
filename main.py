@@ -1,80 +1,68 @@
 import pickle
-import pandas as pd
-import numpy as np
-from MasterSubProbs import MasterProb, SubProb
-import random
-from static_functions import DictMin, IndexUp
 import gurobipy as gp
-import matplotlib.pyplot as plt
+import pandas as pd
 from tqdm import tqdm
-import time
+import numpy as np
 env = gp.Env()
 env2 = gp.Env()
 env2.setParam('OutputFlag', 0)
 env.setParam('DualReductions', 0)
 
+
+# Open data required
 with open('Data/ScenarioProbabilities.pkl', 'rb') as handle:
     Probs = pickle.load(handle)
 handle.close()
-Probs = [Probs[1], Probs[2]]
-
+# Probs = [1/2, 1/2]
 with open('Models/Master_X_Info.pkl', 'rb') as handle:
     Xkeys = pickle.load(handle)
 handle.close()
 
 
-
-
+# Open subproblems
 SP, TMatrices, rVectors = {}, {}, {}
 print('Load Subproblems')
-for scen in tqdm(range(2)):
-    SP[scen] = gp.read(f'Models/Sub{scen+1}.mps', env=env2)
-    with open(f'Models/Sub{scen+1}-Tr.pkl', 'rb') as handle:
+for scen in tqdm(range(len(Probs))):
+    SP[scen] = gp.read(f'Models/Sub{scen}.mps', env=env2)
+    with open(f'Models/Sub{scen}-Tr.pkl', 'rb') as handle:
         TMatrix, rVector = pickle.load(handle)
     handle.close()
     TMatrices[scen] = TMatrix
     rVectors[scen] = rVector
 
-    '''AMatrix = s_model.getA().todok()
-    Constrs = s_model.getConstrs() 
 
-    possibleTkeys = [(r, x) for r in range(len(Constrs)) for x in Xkeys]
-    TMatrices.append({key: AMatrix[key] for key in possibleTkeys if key in AMatrix.keys()})
-    rVectors.append({c: Constrs[c].RHS for c in range(len(Constrs))})'''
-
-
-def GetPIs(X_values):
-    PIs = {}
-    for scen in SP:
-        vars = SP[scen].getVars()
+def GetPIs(X_star):
+    PIs = {}  # The dictionary to save dual multipliers of subproblems
+    for s in SP:  # Fix x in subproblems and solve
+        first_vars = SP[s].getVars()
         for x in Xkeys:
-            vars[x].UB = X_values[x]
-            vars[x].LB = X_values[x]
-        SP[scen].update()
-        SP[scen].optimize()
+            first_vars[x].UB = X_star[x]
+            first_vars[x].LB = X_star[x]
+        SP[s].optimize()
+        if SP[s].status == 2:
+            constrs = SP[s].getConstrs()
+            PIs[s] = [constrs[c].Pi for c in range(len(constrs))]
 
-        if SP[scen].status == 2:
-            constrs = SP[scen].getConstrs()
-            PIs[scen] = [constrs[c].Pi for c in range(len(constrs))]
-
-    pir = [Probs[scen] * sum(PIs[scen][row] * rVectors[scen][row] for row in range(len(rVectors[scen])))
-        for scen in range(len(Probs))]
+    # Calculate two values e and E for Benders
+    pir = [Probs[s] * sum(PIs[s][row] * rVectors[s][row] for row in range(len(rVectors[s])))
+        for s in range(len(Probs))]
     e = sum(pir)
     E = [[0 for x in Xkeys] for _ in range(len(Probs))]
-    for scen in range(len(Probs)):
-        for key in TMatrices[scen].keys():
-            #print(key)
-            E[scen][key[1]] += PIs[scen][key[0]] * TMatrices[scen][key]
-    E = [sum(E[scen][x] * Probs[scen] for scen in range(len(Probs))) for x in Xkeys]
+    for s in range(len(Probs)):
+        for key in TMatrices[s].keys():
+            E[s][key[1]] += PIs[s][key[0]] * TMatrices[s][key]
+    E = [sum(E[s][x] * Probs[s] for s in range(len(Probs))) for x in Xkeys]
     return E, e  
 
 
-def mycallback(model, where): 
+def BendersCut(model, where):
     if where == gp.GRB.Callback.MIPSOL:
         X = model.cbGetSolution(model._vars)
+
         # Get solutions in subproblems, calculate e and E
         E, e = GetPIs(X)
-        # Add a cut based on the solution # For example, adding a simple cut: 
+
+        # Add a cut based on the solution # For example, adding a simple cut:
         model.cbLazy(model._vars[-1] + sum(model._vars[x] * E[x] for x in Xkeys) >= e)
 
         
@@ -87,18 +75,96 @@ if __name__ == '__main__':
         master = gp.read('Models/Master.mps', env=env)
         master._vars = master.getVars()
         master.Params.LazyConstraints = 1
-        master.Params.MIPGap = 0.05
-        master.Params.TimeLimit = 600
-        start = time.time()
-        master.optimize(mycallback)
-        finish = time.time()
-        optimal_solution = [x.x for x in master.getVars()]
+        master.Params.MIPGap = 0.10
+        master.Params.TimeLimit = 1000
+        master.optimize(BendersCut)
+
+        # Reporting
+        from ModelsGenerator import X_ild, C, Load_scens, Outage_scens, DontTran, Y_itg, Y_ittg
+        X_values = [x.x for x in master.getVars()]
         total_cost = master.ObjVal
-        print(optimal_solution)
+        optimal_solution = {}
+        counter = 0
+        for ild in X_ild:
+            optimal_solution[(ild[0], ild[1], ild[2])] = X_values[counter]
+            counter += 1
+
+
+        #  Solve subproblems for optimal x found
+        for scen in SP.keys():
+            first_vars_optimal = SP[scen].getVars()
+            for x in Xkeys:
+                first_vars_optimal[x].UB = X_values[x]
+                first_vars_optimal[x].LB = X_values[x]
+            SP[scen].update()
+            SP[scen].optimize()
+
+
+        print('Reporting started')
+        LoadLost = sum(Probs[i] * sum(SP[i].getVarByName(f'Y_LL[{itg[0]},{itg[1]},{itg[2]}]').x
+                                      for itg in Y_itg) for i in SP.keys())
+        LoadServed = sum(Probs[i] * sum(SP[i].getVarByName(f'Y_ESL[{itg[0]},{itg[1]},{itg[2]}]').x +
+                                        SP[i].getVarByName(f'Y_DGL[{itg[0]},{itg[1]},{itg[2]}]').x +
+                                        SP[i].getVarByName(f'Y_PVL[{itg[0]},{itg[1]},{itg[2]}]').x
+                                        for itg in Y_itg)for i in SP.keys())
+        LoadTrans = sum(Probs[i] * sum(SP[i].getVarByName(f'Y_LT[{ittg[0]},{ittg[1]},{ittg[2]},{ittg[3]}]').x
+                                       for ittg in Y_ittg) for i in SP.keys())
+        GridLoad = sum(Probs[i] * sum(SP[i].getVarByName(f'Y_GridL[{itg[0]},{itg[1]},{itg[2]}]').x
+                                      for itg in Y_itg)for i in SP.keys())
+        TotalLoad = LoadLost + LoadServed + LoadTrans + GridLoad
+        GridExport = sum(Probs[i] * sum(SP[i].getVarByName(f'Y_ESGrid[{itg[0]},{itg[1]},{itg[2]}]').x +
+                                        SP[i].getVarByName(f'Y_PVGrid[{itg[0]},{itg[1]},{itg[2]}]').x +
+                                        SP[i].getVarByName(f'Y_DGGrid[{itg[0]},{itg[1]},{itg[2]}]').x
+                                        for itg in Y_itg)for i in SP.keys())
+
+        #  Resilience Metrics
+        LoadFail = [0 for s in SP.keys()]
+        LoadServedOutage, TotalLoadOutage = [], []
+        LoadServedNoTrans, TotalLoadNoTrans = [], []
+        for scen in SP.keys():
+            if Outage_scens[scen] >= 168 - 16:
+                outage_hours = range(16, 169)
+            else:
+                outage_hours = range(16, 16 + Outage_scens[scen] + 1)
+
+            for oh in outage_hours:
+                if SP[scen].getVarByName(f'Y_LL[1,{oh},1]').x != 0:
+                    LoadFail[scen] = oh - 16
+                    break
+            LoadServedOutage.append(sum(SP[scen].getVarByName(f'Y_ESL[1,{t},1]').x +
+                                        SP[scen].getVarByName(f'Y_DGL[1,{t},1]').x +
+                                        SP[scen].getVarByName(f'Y_PVL[1,{t},1]').x
+                                        for t in outage_hours))
+            TotalLoadOutage.append(sum(Load_scens[scen][1][t-1] for t in outage_hours))
+            LoadServedNoTrans.append(sum(SP[scen].getVarByName(f'Y_ESL[1,{t},1]').x +
+                                        SP[scen].getVarByName(f'Y_DGL[1,{t},1]').x +
+                                        SP[scen].getVarByName(f'Y_PVL[1,{t},1]').x
+                                        for t in outage_hours if t in DontTran))
+            TotalLoadNoTrans.append(sum(Load_scens[scen][1][t-1] for t in outage_hours if t in DontTran))
+
+        Robustness = 1 - np.mean([LoadFail[s]/Outage_scens[s] for s in SP.keys()])
+        Redundancy = np.mean([LoadServedOutage[s]/TotalLoadOutage[s] for s in SP.keys()])
+        Resourcefullness = np.mean([LoadServedNoTrans[s]/TotalLoadNoTrans[s] for s in SP.keys()])
+
+        #  Other Reports
+        report =   {'Investment': sum(C[ild[2]] * optimal_solution[ild] for ild in X_ild if ild[0] == 1),
+                    'Reinvestment': sum(C[ild[2]] * optimal_solution[ild] for ild in X_ild if ild[0] == 2),
+                    'Avg Recourse': sum(Probs[s] * SP[s].ObjVal for s in SP.keys()),
+                    'Load Lost%': LoadLost / TotalLoad,
+                    'Load Served%': LoadServed / TotalLoad,
+                    'Load Transferred%': LoadTrans / TotalLoad,
+                    'Grid Load%': GridLoad / TotalLoad,
+                    'Grid Exported': GridExport,
+                    'Robustness': Robustness,
+                    'Redundancy': Redundancy,
+                    'Resourcefulness': Resourcefullness}
+        pd.DataFrame(optimal_solution, index=[0]).to_csv('OptimalSolution.csv')
+        pd.DataFrame(report, index=[0]).to_csv('Report.csv')
 
 
 
 
+    # Previous code: No use
     '''k, t, t_last = 1, {}, 0  # Iteration number
     epsilon1 = 0.1   # Stopping tolerance
 

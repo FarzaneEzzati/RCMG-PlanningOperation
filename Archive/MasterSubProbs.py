@@ -1,5 +1,4 @@
 import pickle
-from static_functions import *
 import gurobipy as gp
 from gurobipy import quicksum, GRB
 import math
