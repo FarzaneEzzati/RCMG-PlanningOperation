@@ -75,12 +75,13 @@ if __name__ == '__main__':
         master = gp.read('Models/Master.mps', env=env)
         master._vars = master.getVars()
         master.Params.LazyConstraints = 1
-        master.Params.MIPGap = 0.10
+        master.Params.MIPGap = 0.05
         master.Params.TimeLimit = 1000
         master.optimize(BendersCut)
 
         # Reporting
-        from ModelsGenerator import X_ild, C, Load_scens, Outage_scens, DontTran, Y_itg, Y_ittg
+        from ModelsGenerator import X_ild, C, Load_scens, AG_scens, Outage_scens, DontTran, Y_itg, Y_ittg,\
+            RNGTime, LoadPrice, GridPlus, RNGSta, RNGMonth, ReInvsYear, eta_i
         X_values = [x.x for x in master.getVars()]
         total_cost = master.ObjVal
         optimal_solution = {}
@@ -121,6 +122,7 @@ if __name__ == '__main__':
         LoadFail = [0 for s in SP.keys()]
         LoadServedOutage, TotalLoadOutage = [], []
         LoadServedNoTrans, TotalLoadNoTrans = [], []
+        LoadServedNoOutage, TotalLoadNoOutage = [], []
         for scen in SP.keys():
             if Outage_scens[scen] >= 168 - 16:
                 outage_hours = range(16, 169)
@@ -131,21 +133,34 @@ if __name__ == '__main__':
                 if SP[scen].getVarByName(f'Y_LL[1,{oh},1]').x != 0:
                     LoadFail[scen] = oh - 16
                     break
-            LoadServedOutage.append(sum(SP[scen].getVarByName(f'Y_ESL[1,{t},1]').x +
-                                        SP[scen].getVarByName(f'Y_DGL[1,{t},1]').x +
-                                        SP[scen].getVarByName(f'Y_PVL[1,{t},1]').x
-                                        for t in outage_hours))
-            TotalLoadOutage.append(sum(Load_scens[scen][1][t-1] for t in outage_hours))
-            LoadServedNoTrans.append(sum(SP[scen].getVarByName(f'Y_ESL[1,{t},1]').x +
-                                        SP[scen].getVarByName(f'Y_DGL[1,{t},1]').x +
-                                        SP[scen].getVarByName(f'Y_PVL[1,{t},1]').x
-                                        for t in outage_hours if t in DontTran))
-            TotalLoadNoTrans.append(sum(Load_scens[scen][1][t-1] for t in outage_hours if t in DontTran))
+            LoadServedOutage.append(sum(SP[scen].getVarByName(f'Y_ESL[{i},{t},{g}]').x +
+                                        SP[scen].getVarByName(f'Y_DGL[{i},{t},{g}]').x +
+                                        SP[scen].getVarByName(f'Y_PVL[{i},{t},{g}]').x
+                                        for i in RNGSta for t in outage_hours for g in RNGMonth))
+            TotalLoadOutage.append(sum((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][t-1]
+                                       for i in RNGSta for t in outage_hours for g in RNGMonth))
 
-        Robustness = 1 - np.mean([LoadFail[s]/Outage_scens[s] for s in SP.keys()])
-        Redundancy = np.mean([LoadServedOutage[s]/TotalLoadOutage[s] for s in SP.keys()])
-        Resourcefullness = np.mean([LoadServedNoTrans[s]/TotalLoadNoTrans[s] for s in SP.keys()])
+            LoadServedNoTrans.append(sum(SP[scen].getVarByName(f'Y_ESL[{i},{t},{g}]').x +
+                                        SP[scen].getVarByName(f'Y_DGL[{i},{t},{g}]').x +
+                                        SP[scen].getVarByName(f'Y_PVL[{i},{t},{g}]').x
+                                        for i in RNGSta for t in outage_hours if t in DontTran for g in RNGMonth))
+            TotalLoadNoTrans.append(sum((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][t-1]
+                                        for i in RNGSta for t in outage_hours if t in DontTran for g in RNGMonth))
 
+            LoadServedNoOutage.append(sum(SP[scen].getVarByName(f'Y_ESL[{i},{t},{g}]').x +
+                                        SP[scen].getVarByName(f'Y_DGL[{i},{t},{g}]').x +
+                                        SP[scen].getVarByName(f'Y_PVL[{i},{t},{g}]').x
+                                        for i in RNGSta for t in RNGTime if t not in outage_hours for g in RNGMonth))
+            TotalLoadNoOutage.append(sum((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear *  Load_scens[scen][g][t - 1]
+                                        for i in RNGSta for t in RNGTime if t not in outage_hours for g in RNGMonth))
+
+        Robustness = 1 - eta_i * sum([Probs[s] * LoadFail[s]/Outage_scens[s] for s in SP.keys()])
+        Redundancy =  eta_i * sum([Probs[s] * LoadServedOutage[s]/TotalLoadOutage[s] for s in SP.keys()])
+        Resourcefullness =  eta_i * sum([Probs[s] * LoadServedNoTrans[s]/TotalLoadNoTrans[s] for s in SP.keys()])
+        Bill1 = sum([Probs[s] * TotalLoadNoOutage[s] * GridPlus for s in SP.keys()])
+        Bill2 = sum([Probs[s] * (eta_i * LoadServedNoOutage[s] * LoadPrice +
+                                (TotalLoadNoOutage[s] - eta_i * LoadServedNoOutage[s]) * GridPlus)
+                    for s in SP.keys()])
         #  Other Reports
         report =   {'Investment': sum(C[ild[2]] * optimal_solution[ild] for ild in X_ild if ild[0] == 1),
                     'Reinvestment': sum(C[ild[2]] * optimal_solution[ild] for ild in X_ild if ild[0] == 2),
@@ -155,6 +170,8 @@ if __name__ == '__main__':
                     'Load Transferred%': LoadTrans / TotalLoad,
                     'Grid Load%': GridLoad / TotalLoad,
                     'Grid Exported': GridExport,
+                    'Bill Before': Bill1,
+                    'Bill After': Bill2,
                     'Robustness': Robustness,
                     'Redundancy': Redundancy,
                     'Resourcefulness': Resourcefullness}

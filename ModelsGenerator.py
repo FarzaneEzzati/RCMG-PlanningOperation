@@ -1,4 +1,6 @@
 import pickle
+
+import numpy as np
 import pandas as pd
 import time
 import gurobipy as gp
@@ -87,8 +89,11 @@ RNGTimeMinus = range(1, T)
 RNGMonth = range(1, MCount + 1)
 RNGScen = list(all_probs.keys())
 RNGSta = (1, 2)  # 0: year before reinvestment, 1: year after reinvestment
-DontTran = [24 * i + 13 + j for i in range(6) for j in
-            range(7)]  # Each week from hour 1 to 19 pm transfer is prohibited.
+DontTran_S = [24 * i + 13 + j for i in range(6) for j in range(8)]
+# Each week in summer from hour 1 to 19 pm transfer is prohibited.
+DontTran_W = np.concatenate(([24 * i + 6 + j for i in range(6) for j in range(5)],
+                             [24 * i + 18 + j for i in range(6) for j in range(5)]))
+# Each week in winter from hour 6 am to 10 am and 6 pm to 10 pm transfer is prohibited.
 
 # Sensitivity Parameters
 InvImportance = 1
@@ -96,22 +101,26 @@ VoLL_sensitivity = 1
 TransMax = 1
 ReInvsYear = 10
 Operational_Rate = 0.01
-Labor_Factor = 0.12
+Labor_Factor = 0.15
 
 # Global parameters
-Budget1 = 1000000
+Budget1 = 100000000
 Budget2 = Budget1 / 2
 Years = 20
-PA_Factor = ((1 + Operational_Rate) ** Years - 1) / (Operational_Rate * (1 + Operational_Rate) ** Years)
-C = {1: (1 + Labor_Factor) * 151, 2: (1 + Labor_Factor) * 4 * 2780, 3: (1 + Labor_Factor) * 400}  # order is: [ES, PV, DG]
-CO = {i: C[i] * (1 + Operational_Rate * PA_Factor) for i in (1, 2, 3)}
-LocationPrice = {i: 2000 for i in RNGLoc}
-F = {(i, j): LocationPrice[j] for j in LocationPrice for i in RNGSta}
-UB = {(1, 1): 100, (1, 2): 119, (1, 3): 100,
-        (2, 1): 100, (2, 2): 412, (2, 3): 100,
-        (3, 1): 100, (3, 2): 147, (3, 3): 100,
-        (4, 1): 100, (4, 2): 139, (4, 3): 100,
-        (5, 1): 100, (5, 2): 256, (5, 3): 100}
+Interest_Rate = 0.05
+PA_Factor1 = ((1 + Interest_Rate) ** Years - 1) / (Interest_Rate * (1 + Interest_Rate) ** Years)
+PA_Factor2 = ((1 + Interest_Rate) ** (Years - ReInvsYear) - 1) / (Interest_Rate * (1 + Interest_Rate) ** (Years - ReInvsYear))
+PF_Factor = 1 / (1 + Interest_Rate) ** ReInvsYear
+C = {1: (1 + Labor_Factor) * 300, 2: (1 + Labor_Factor) * 2780, 3: (1 + Labor_Factor) * 400}  # order is: [ES, PV, DG]
+CO1 = {i: C[i] * (1 + Operational_Rate * PA_Factor1) for i in (1, 2, 3)}
+CO2 = {i: C[i] * (1 + Operational_Rate * PA_Factor2) for i in (1, 2, 3)}
+LocationPrice = {1: 18164, 2: 62936, 3: 22469, 4: 21467, 5: 39160}
+F = {j: LocationPrice[j] for j in LocationPrice}
+UB = {(1, 1): 300, (1, 2): 114, (1, 3): 100,
+    (2, 1): 300, (2, 2): 396, (2, 3): 100,
+    (3, 1): 300, (3, 2): 141, (3, 3): 100,
+    (4, 1): 300, (4, 2): 133, (4, 3): 100,
+    (5, 1): 300, (5, 2): 246, (5, 3): 100}  # Upper bound of devices capacity (location, device)
 
 # Efficiencies and performances
 ES_gamma = 0.85
@@ -122,9 +131,9 @@ DGEffic = DG_consumption * FuelPrice  # Fuel cost of DG: $/kWh
 ES_d = 0.02
 
 # Prices
-zeta = 0.8
-GridPlus = 0.1812  # $/kWh
-GridMinus = 0.1207
+zeta = 0.8  # The parameter specifying what percentage of electricity price be determined as price to sell power to households
+GridPlus = 0.1812  # $/kWh (importing price of power from the grid)
+GridMinus = 0.1207  # exporting price of power back to grid
 LoadPrice = zeta * GridPlus
 PVCurPrice = GridMinus
 DGCurPrice = GridMinus + DGEffic
@@ -155,21 +164,21 @@ Y_ittgs = [(i, t, to, g, s)
            for i in RNGSta for t in RNGTime for to in RNGTime for g in RNGMonth for s in RNGScen]
 Y_1tg = [(1, t, g) for t in RNGTime for g in RNGMonth]
 Y_2tg = [(2, t, g) for t in RNGTime for g in RNGMonth]
-eta_M = -10000000
+eta_M = -100000000
 
 
 def MasterProb():
     master = gp.Model('MasterProb', env=env)
     '''Investment'''
     X = master.addVars(X_ild, vtype=GRB.INTEGER, name='X')
-    U = master.addVars(X_il, lb=0, ub=1, vtype=GRB.BINARY, name='U')
+    U = master.addVars(X_il, vtype=GRB.BINARY, name='U')
     master.update()
     # Investment constraint
-    master.addConstr(quicksum(F[(1, l)] * U[(1, l)] for l in RNGLoc) +
+    master.addConstr(quicksum(F[l] * U[(1, l)] for l in RNGLoc) +
                      quicksum(X[(1, l, d)] * C[d] for l in RNGLoc for d in RNGDvc) <= Budget1,
                      name='Investment')
     # ReInvestment constraint
-    master.addConstr(quicksum(F[(2, l)] * (U[(2, l)] - U[(1, l)]) for l in RNGLoc) +
+    master.addConstr(quicksum(F[l] * (U[(2, l)] - U[(1, l)]) for l in RNGLoc) +
                      quicksum(X[(2, l, d)] * C[d] for l in RNGLoc for d in RNGDvc) <= Budget2,
                      name='Reinvestment')
     # Capacity limit
@@ -182,9 +191,11 @@ def MasterProb():
     # Location constraints
     master.addConstrs((U[(2, l)] >= U[(1, l)] for l in RNGLoc), name='Location')
 
-    Capital = quicksum(F[(1, l)] * U[(1, l)] + X[(1, l, d)] * CO[d]
+    Capital = quicksum(PA_Factor1 * F[l] * U[(1, l)] +
+                       X[(1, l, d)] * CO1[d]
                        for l in RNGLoc for d in RNGDvc) + \
-              quicksum(F[(2, l)] * (U[(2, l)] - U[(1, l)]) + X[(2, l, d)] * CO[d]
+              quicksum(PA_Factor2 * F[l] * (U[(2, l)] - U[(1, l)]) +
+                       X[(2, l, d)] * CO2[d]
                        for l in RNGLoc for d in RNGDvc)
 
     eta = master.addVar(lb=eta_M, name='eta')
@@ -225,7 +236,7 @@ def SubProb(scen):
         L = {(i, t, g): (1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][t - 1]
              for i in RNGSta for t in RNGTime for g in RNGMonth}
 
-        PV = {(t, g): PV_scens[scen][g][t - 1] for t in RNGTime for g in RNGMonth}
+        PV = {(t, g): 0.25 * PV_scens[scen][g][t - 1] for t in RNGTime for g in RNGMonth}
 
         Out_Time = {g: 0 for g in RNGMonth}
         if Outage_scens[scen] != 0:
@@ -304,20 +315,20 @@ def SubProb(scen):
 
     '''Costs'''
     if True:
-        CostInv = PVCurPrice * sum(Y_PVCur[itg] + Y_DGCur[itg] for itg in Y_1tg) + \
+        CostInv = sum(PVCurPrice * Y_PVCur[itg] + DGCurPrice * Y_DGCur[itg] for itg in Y_1tg) + \
                   sum(VoLL_hourly[itg[1]] * Y_LL[itg] for itg in Y_1tg) + \
                   DGEffic * sum(Y_DGL[itg] + Y_DGGrid[itg] + Y_DGCur[itg] + Y_DGES[itg] for itg in Y_1tg) + \
                   GridPlus * sum(Y_GridES[itg] + Y_GridL[itg] for itg in Y_1tg) - \
                   GridMinus * sum(Y_PVGrid[itg] + Y_ESGrid[itg] + Y_DGGrid[itg] for itg in Y_1tg) - \
-                  LoadPrice * sum(Y_ESL[itg] + Y_DGL[itg] + Y_PVL[itg] for itg in Y_1tg) + \
-                  TransPrice * sum(Y_LT[(1, to, t, g)] for to in RNGTime for t in RNGTime for g in RNGMonth)
-        CostReInv = PVCurPrice * sum(Y_PVCur[itg] + Y_DGCur[itg] for itg in Y_2tg) + \
+                  LoadPrice * sum(Y_ESL[itg] + Y_DGL[itg] + Y_PVL[itg] for itg in Y_1tg)
+                  #  TransPrice * sum(Y_LT[(1, to, t, g)] for to in RNGTime for t in RNGTime for g in RNGMonth)
+        CostReInv = sum(PVCurPrice * Y_PVCur[itg] + DGCurPrice * Y_DGCur[itg] for itg in Y_2tg) + \
                     sum(VoLL_hourly[itg[1]] * Y_LL[itg] for itg in Y_2tg) + \
                     DGEffic * sum(Y_DGL[itg] + Y_DGGrid[itg] + Y_DGCur[itg] + Y_DGES[itg] for itg in Y_2tg) + \
                     GridPlus * sum(Y_GridES[itg] + Y_GridL[itg] for itg in Y_2tg) - \
                     GridMinus * sum(Y_PVGrid[itg] + Y_ESGrid[itg] + Y_DGGrid[itg] for itg in Y_2tg) - \
-                    LoadPrice * sum(Y_ESL[itg] + Y_DGL[itg] + Y_PVL[itg] for itg in Y_2tg) + \
-                    TransPrice * sum(Y_LT[(2, to, t, g)] for to in RNGTime for t in RNGTime for g in RNGMonth)
+                    LoadPrice * sum(Y_ESL[itg] + Y_DGL[itg] + Y_PVL[itg] for itg in Y_2tg)
+                    #  TransPrice * sum(Y_LT[(2, to, t, g)] for to in RNGTime for t in RNGTime for g in RNGMonth)
     total_cost = GenPar * (ReInvsYear * CostInv + (Years - ReInvsYear) * CostReInv)
     sub.setObjective(total_cost, sense=GRB.MINIMIZE)
     sub.update()
@@ -326,8 +337,7 @@ def SubProb(scen):
     Constrs = sub.getConstrs()
 
     Xkeys = range(len(X_ild))
-    possibleTkeys = [(r, x) for r in range(len(Constrs)) for x in Xkeys]
-    TMatrix = {key: AMatrix[key] for key in possibleTkeys if key in AMatrix.keys()}
+    TMatrix = {key: AMatrix[key] for key in AMatrix.keys() if key[1] in Xkeys}
     rVector = {c: Constrs[c].RHS for c in range(len(Constrs))}
     with open(f'Models/Sub{scen}-Tr.pkl', 'wb') as f:
         pickle.dump([TMatrix, rVector], f)
@@ -354,7 +364,7 @@ class DetModel:
             real.addConstr(quicksum(X[(2, l, d)] * C[d] for d in RNGDvc) <= Budget2, name='RIB')
 
             # Formulate capital cost
-            Capital += quicksum((X[(1, l, d)] + X[(2, l, d)]) * CO[d] for d in RNGDvc)
+            Capital += quicksum((X[(1, l, d)] + X[(2, l, d)]) * CO1[d] for d in RNGDvc)
 
         '''Scheduling variables'''
         if True:
@@ -507,10 +517,7 @@ class DetModel:
 
 
 if __name__ == '__main__':
-
-    # MasterProb()
-    for scen in tqdm.tqdm(norm_probs):
-        SubProb(scen)
-        '''if scen == 0:
-            break'''
+    '''MasterProb()
+    for scen in tqdm(norm_probs.keys()):
+        SubProb(scen)'''
     # real = DetModel()
