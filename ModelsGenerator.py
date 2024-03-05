@@ -13,11 +13,12 @@ warnings.filterwarnings('ignore')
 env = gp.Env()
 env.setParam('OutputFlag', 0)
 
+S = 20
 # Preparing Power Outage Scenarios
 if True:
     OT = pd.read_csv('Scenarios/Outage/Outage Scenarios - reduced.csv')
-    Outage_probs = {i: OT['Probability'].iloc[i] for i in range(30)}
-    Outage_scens = {i: int(OT['Gamma Scenario'].iloc[i]) for i in range(30)}
+    Outage_probs = {i: OT['Probability'].iloc[i] for i in range(S)}
+    Outage_scens = {i: int(OT['Gamma Scenario'].iloc[i]) for i in range(S)}
 
 # Preparing PV scenarios
 if True:
@@ -89,25 +90,32 @@ RNGTimeMinus = range(1, T)
 RNGMonth = range(1, MCount + 1)
 RNGScen = list(all_probs.keys())
 RNGSta = (1, 2)  # 0: year before reinvestment, 1: year after reinvestment
-DontTran_S = [24 * i + 13 + j for i in range(6) for j in range(8)]
+
+summer_peak = [24 * i + 13 + j for i in range(6) for j in range(8)]
 # Each week in summer from hour 1 to 19 pm transfer is prohibited.
-DontTran_W = np.concatenate(([24 * i + 6 + j for i in range(6) for j in range(5)],
+winter_peak = np.concatenate(([24 * i + 6 + j for i in range(6) for j in range(5)],
                              [24 * i + 18 + j for i in range(6) for j in range(5)]))
+
 # Each week in winter from hour 6 am to 10 am and 6 pm to 10 pm transfer is prohibited.
+
+DontTrans = {1: winter_peak, 2: winter_peak, 3: winter_peak,
+             4: [], 5: [],
+             6: summer_peak, 7: summer_peak, 8: summer_peak, 9: summer_peak,
+             10: [], 11: [], 12: []}
 
 # Sensitivity Parameters
 InvImportance = 1
 VoLL_sensitivity = 1
-TransMax = 1
+TransMax = 0.25
 ReInvsYear = 10
-Operational_Rate = 0.01
+Operational_Rate = 0.05
 Labor_Factor = 0.15
 
 # Global parameters
-Budget1 = 100000000
+Budget1 = 10000000
 Budget2 = Budget1 / 2
 Years = 20
-Interest_Rate = 0.05
+Interest_Rate = 0.02
 PA_Factor1 = ((1 + Interest_Rate) ** Years - 1) / (Interest_Rate * (1 + Interest_Rate) ** Years)
 PA_Factor2 = ((1 + Interest_Rate) ** (Years - ReInvsYear) - 1) / (Interest_Rate * (1 + Interest_Rate) ** (Years - ReInvsYear))
 PF_Factor = 1 / (1 + Interest_Rate) ** ReInvsYear
@@ -139,13 +147,14 @@ PVCurPrice = GridMinus
 DGCurPrice = GridMinus + DGEffic
 
 VoLL = 1.59 * VoLL_sensitivity * GridPlus
-VoLL_hourly = {}
+VoLL_hourly = {i: {} for i in RNGMonth}
 TransPrice = VoLL * TransMax
-for tt in RNGTime:
-    if tt in DontTran:
-        VoLL_hourly[tt] = VoLL
-    else:
-        VoLL_hourly[tt] = (1 - TransMax) * VoLL
+for g in RNGMonth:
+    for tt in RNGTime:
+        if tt in DontTrans[g]:
+            VoLL_hourly[g][tt] = VoLL
+        else:
+            VoLL_hourly[g][tt] = (1 - TransMax) * VoLL
 
 SOC_UB, SOC_LB = 0.9, 0.1
 eta_i = 0.9
@@ -183,11 +192,15 @@ def MasterProb():
                      name='Reinvestment')
     # Capacity limit
     master.addConstrs((quicksum(X[(i, l, d)] for i in RNGSta) <= UB[(l, d)]
-                       for l in RNGLoc for d in RNGDvc), name='Total Capacity Limit')
+                       for l in RNGLoc for d in RNGDvc if d != 1), name='Total Capacity Limit')
+
+    master.addConstrs((quicksum(X[(i, l, 1)] for i in RNGSta) <= 1.5*UB[(l, 1)]
+                       for l in RNGLoc), name='Total Capacity Limit')
 
     master.addConstrs((X[(i, l, d)] <= UB[(l, d)] * U[(i, l)]
-                       for i in RNGSta for l in RNGLoc for d in RNGDvc), name='Total Capacity Limit')
-
+                       for i in RNGSta for l in RNGLoc for d in RNGDvc if d != 1), name='Location Allowance')
+    master.addConstrs((X[(i, l, 1)] <= UB[(l, 1)]/i * U[(i, l)]
+                       for i in RNGSta for l in RNGLoc), name='Location Allowance')
     # Location constraints
     master.addConstrs((U[(2, l)] >= U[(1, l)] for l in RNGLoc), name='Location')
 
@@ -280,7 +293,7 @@ def SubProb(scen):
                               Y_LL[(i, t, g)] + Total_Transfer_from_t == L[(i, t, g)],
                               name='LoadD')
 
-                if t in DontTran:
+                if t in DontTrans[g]:
                     # Don't allow transfer
                     sub.addConstr(Total_Transfer_from_t == 0, name='NoTrans')
                 else:
@@ -316,14 +329,14 @@ def SubProb(scen):
     '''Costs'''
     if True:
         CostInv = sum(PVCurPrice * Y_PVCur[itg] + DGCurPrice * Y_DGCur[itg] for itg in Y_1tg) + \
-                  sum(VoLL_hourly[itg[1]] * Y_LL[itg] for itg in Y_1tg) + \
+                  sum(VoLL_hourly[itg[2]][itg[1]] * Y_LL[itg] for itg in Y_1tg) + \
                   DGEffic * sum(Y_DGL[itg] + Y_DGGrid[itg] + Y_DGCur[itg] + Y_DGES[itg] for itg in Y_1tg) + \
                   GridPlus * sum(Y_GridES[itg] + Y_GridL[itg] for itg in Y_1tg) - \
                   GridMinus * sum(Y_PVGrid[itg] + Y_ESGrid[itg] + Y_DGGrid[itg] for itg in Y_1tg) - \
                   LoadPrice * sum(Y_ESL[itg] + Y_DGL[itg] + Y_PVL[itg] for itg in Y_1tg)
                   #  TransPrice * sum(Y_LT[(1, to, t, g)] for to in RNGTime for t in RNGTime for g in RNGMonth)
         CostReInv = sum(PVCurPrice * Y_PVCur[itg] + DGCurPrice * Y_DGCur[itg] for itg in Y_2tg) + \
-                    sum(VoLL_hourly[itg[1]] * Y_LL[itg] for itg in Y_2tg) + \
+                    sum(VoLL_hourly[itg[2]][itg[1]] * Y_LL[itg] for itg in Y_2tg) + \
                     DGEffic * sum(Y_DGL[itg] + Y_DGGrid[itg] + Y_DGCur[itg] + Y_DGES[itg] for itg in Y_2tg) + \
                     GridPlus * sum(Y_GridES[itg] + Y_GridL[itg] for itg in Y_2tg) - \
                     GridMinus * sum(Y_PVGrid[itg] + Y_ESGrid[itg] + Y_DGGrid[itg] for itg in Y_2tg) - \
@@ -337,7 +350,10 @@ def SubProb(scen):
     Constrs = sub.getConstrs()
 
     Xkeys = range(len(X_ild))
-    TMatrix = {key: AMatrix[key] for key in AMatrix.keys() if key[1] in Xkeys}
+    possible_Tr_indices = [(r, x) for r in range(len(Constrs)) for x in Xkeys]
+    A_indices = list(AMatrix.keys())
+    T_indcies = list(set(possible_Tr_indices) & set(A_indices))
+    TMatrix = {key: AMatrix[key] for key in T_indcies}
     rVector = {c: Constrs[c].RHS for c in range(len(Constrs))}
     with open(f'Models/Sub{scen}-Tr.pkl', 'wb') as f:
         pickle.dump([TMatrix, rVector], f)
@@ -438,7 +454,7 @@ class DetModel:
                                        quicksum(Y_LT[(i, t, to, g, s)] for to in range(t, T + 1)) ==
                                        L[(i, t, g, s)], name='')
 
-                        if t in DontTran:
+                        if t in DontTrans:
                             # Don't allow transfer
                             real.addConstrs(Y_LT[(i, t, to, g, s)] == 0 for to in range(t, T + 1))
                         else:
@@ -517,7 +533,9 @@ class DetModel:
 
 
 if __name__ == '__main__':
-    '''MasterProb()
-    for scen in tqdm(norm_probs.keys()):
-        SubProb(scen)'''
+    MasterProb()
+    '''for scen in tqdm.tqdm(norm_probs.keys()):
+        SubProb(scen)
+        if scen == 1:
+            break'''
     # real = DetModel()
