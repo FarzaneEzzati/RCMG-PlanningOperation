@@ -3,10 +3,11 @@ import gurobipy as gp
 import pandas as pd
 from tqdm import tqdm
 import numpy as np
+from ModelsGenerator import Xkeys, X_ld, C, Load_scens, AG_scens, Outage_scens, DontTrans, Y_itg, Y_ittg, \
+    RNGTime, LoadPrice, GridPlus, RNGSta, RNGMonth, ReInvsYear, eta_i
 env = gp.Env()
 env2 = gp.Env()
 env2.setParam('OutputFlag', 0)
-env.setParam('DualReductions', 0)
 
 
 # Open data required
@@ -14,10 +15,6 @@ with open('Data/ScenarioProbabilities.pkl', 'rb') as handle:
     Probs = pickle.load(handle)
 handle.close()
 Probs = {i: Probs[i] for i in range(20)}
-# Probs = [1/2, 1/2]
-with open('Models/Master_X_Info.pkl', 'rb') as handle:
-    Xkeys = pickle.load(handle)
-handle.close()
 
 
 # Open subproblems
@@ -35,10 +32,10 @@ for scen in tqdm(range(len(Probs))):
 def GetPIs(X_star):
     PIs = {}  # The dictionary to save dual multipliers of subproblems
     for s in SP:  # Fix x in subproblems and solve
-        first_vars = SP[s].getVars()
+        vars = SP[s].getVars()
         for x in Xkeys:
-            first_vars[x].UB = X_star[x]
-            first_vars[x].LB = X_star[x]
+            vars[x].UB = X_star[x]
+            vars[x].LB = X_star[x]
         SP[s].optimize()
         if SP[s].status == 2:
             PIs[s] = [c.Pi for c in SP[s].getConstrs()]
@@ -78,26 +75,28 @@ if __name__ == '__main__':
     master.optimize(BendersCut)
 
     # Reporting
-    from ModelsGenerator import X_ild, C, Load_scens, AG_scens, Outage_scens, DontTrans, Y_itg, Y_ittg,\
-        RNGTime, LoadPrice, GridPlus, RNGSta, RNGMonth, ReInvsYear, eta_i
     X_values = [x.x for x in master.getVars()]
     total_cost = master.ObjVal
-    optimal_solution = {}
+    X1 = {}
     counter = 0
-    for ild in X_ild:
-        optimal_solution[(ild[0], ild[1], ild[2])] = X_values[counter]
+    for ld in X_ld:
+        X1[(ld[0], ld[1])] = X_values[counter]
         counter += 1
-    pd.DataFrame(optimal_solution, index=[0]).to_csv('OptimalSolution.csv')
 
 
     #  Solve subproblems for optimal x found
+    X2 = {ld: 0 for ld in X_ld}
     for scen in SP.keys():
-        first_vars_optimal = SP[scen].getVars()
+        vars_optimal = SP[scen].getVars()
         for x in Xkeys:
-            first_vars_optimal[x].UB = X_values[x]
-            first_vars_optimal[x].LB = X_values[x]
+            vars_optimal[x].UB = X_values[x]
+            vars_optimal[x].LB = X_values[x]
         SP[scen].update()
         SP[scen].optimize()
+        for ld in X_ld:
+            X2[ld] += Probs[scen] * SP[scen].getVarByName(f'X2[{ld[0]},{ld[1]}]').x
+    pd.DataFrame(X1, index=[0]).to_csv('X1.csv')
+    pd.DataFrame(X2, index=[0]).to_csv('X2.csv')
 
 
     print('Reporting started')
@@ -161,8 +160,8 @@ if __name__ == '__main__':
                             (TotalLoadNoOutage[s] - eta_i * LoadServedNoOutage[s]) * GridPlus)
                 for s in SP.keys()])
     #  Other Reports
-    report =   {'Investment': sum(C[ild[2]] * optimal_solution[ild] for ild in X_ild if ild[0] == 1),
-                'Reinvestment': sum(C[ild[2]] * optimal_solution[ild] for ild in X_ild if ild[0] == 2),
+    report =   {'Investment': sum(C[ld[1]] * X1[ld] for ld in X_ld),
+                'Reinvestment': sum(C[ld[1]] * X2[ld] for ld in X_ld),
                 'Avg Recourse': sum(Probs[s] * SP[s].ObjVal for s in SP.keys()),
                 'Load Lost%': LoadLost / TotalLoad,
                 'Load Served%': LoadServed / TotalLoad,
