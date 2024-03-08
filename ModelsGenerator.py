@@ -103,8 +103,8 @@ DontTrans = {1: winter_peak, 2: winter_peak, 3: winter_peak,
              10: [], 11: [], 12: []}
 
 # Sensitivity Parameters
-InvImportance = 0.75
-VoLL_sensitivity = 1
+InvImportance = 1
+VoLL_sensitivity = 20
 TransMax = 0.25
 ReInvsYear = 10
 Operational_Rate = 0.01

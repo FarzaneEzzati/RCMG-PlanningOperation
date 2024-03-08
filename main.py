@@ -5,17 +5,16 @@ from tqdm import tqdm
 import numpy as np
 from ModelsGenerator import Xkeys, X_ld, C, Load_scens, AG_scens, Outage_scens, DontTrans, Y_itg, Y_ittg, \
     RNGTime, LoadPrice, GridPlus, RNGSta, RNGMonth, ReInvsYear, eta_i
+
 env = gp.Env()
 env2 = gp.Env()
 env2.setParam('OutputFlag', 0)
-
 
 # Open data required
 with open('Data/ScenarioProbabilities.pkl', 'rb') as handle:
     Probs = pickle.load(handle)
 handle.close()
 Probs = {i: Probs[i] for i in range(20)}
-
 
 # Open subproblems
 SP, TMatrices, rVectors = {}, {}, {}
@@ -48,41 +47,36 @@ def GetPIs(X_star):
         for key in TMatrices[s].keys():
             E[s][key[1]] += PIs[s][key[0]] * TMatrices[s][key]
     E = [sum(E[s][x] * Probs[s] for s in range(len(Probs))) for x in Xkeys]
-    return E, e  
+    return E, e
 
 
 def BendersCut(model, where):
     if where == gp.GRB.Callback.MIPSOL:
         X = model.cbGetSolution(model._vars)
-
         # Get solutions in subproblems, calculate e and E
         E, e = GetPIs(X)
-
         # Add a cut based on the solution # For example, adding a simple cut:
         model.cbLazy(model._vars[-1] + sum(model._vars[x] * E[x] for x in Xkeys) >= e)
 
-        
 
 if __name__ == '__main__':
-
+    # Solve master problem by callback
     master = gp.read('Models/Master.mps', env=env)
     master._vars = master.getVars()
     master.Params.LazyConstraints = 1
-    master.Params.MIPGap = 0.05
-    master.Params.TimeLimit = 1000
+    master.Params.MIPGap = 0.02
+    master.Params.TimeLimit = 2000
     master.Params.LogFile = "master_log.log"
     master.Params.DegenMoves = 0
     master.optimize(BendersCut)
 
     # Reporting
-    X_values = [x.x for x in master.getVars()]
-    total_cost = master.ObjVal
-    X1 = {}
-    counter = 0
+    X_values = [x.x for x in master.getVars()] # Save optimal solution of master problem
+    total_cost = master.ObjVal # the objective value of master problem
+    X1, counter = {}, 0  # start changing solution format from a list to dictionary to find ild
     for ld in X_ld:
         X1[(ld[0], ld[1])] = X_values[counter]
         counter += 1
-
 
     #  Solve subproblems for optimal x found
     X2 = {ld: 0 for ld in X_ld}
@@ -95,9 +89,8 @@ if __name__ == '__main__':
         SP[scen].optimize()
         for ld in X_ld:
             X2[ld] += Probs[scen] * SP[scen].getVarByName(f'X2[{ld[0]},{ld[1]}]').x
-    pd.DataFrame(X1, index=[0]).to_csv('X1.csv')
-    pd.DataFrame(X2, index=[0]).to_csv('X2.csv')
-
+    pd.DataFrame(X1, index=[0]).to_csv('X1.csv') # master problem solution save
+    pd.DataFrame(X2, index=[0]).to_csv('X2.csv') # subproblem solution save
 
     print('Reporting started')
     LoadLost = sum(Probs[i] * sum(SP[i].getVarByName(f'Y_LL[{itg[0]},{itg[1]},{itg[2]}]').x
@@ -105,19 +98,19 @@ if __name__ == '__main__':
     LoadServed = sum(Probs[i] * sum(SP[i].getVarByName(f'Y_ESL[{itg[0]},{itg[1]},{itg[2]}]').x +
                                     SP[i].getVarByName(f'Y_DGL[{itg[0]},{itg[1]},{itg[2]}]').x +
                                     SP[i].getVarByName(f'Y_PVL[{itg[0]},{itg[1]},{itg[2]}]').x
-                                    for itg in Y_itg)for i in SP.keys())
+                                    for itg in Y_itg) for i in SP.keys())
     LoadTrans = sum(Probs[i] * sum(SP[i].getVarByName(f'Y_LT[{ittg[0]},{ittg[1]},{ittg[2]},{ittg[3]}]').x
                                    for ittg in Y_ittg) for i in SP.keys())
     GridLoad = sum(Probs[i] * sum(SP[i].getVarByName(f'Y_GridL[{itg[0]},{itg[1]},{itg[2]}]').x
-                                  for itg in Y_itg)for i in SP.keys())
+                                  for itg in Y_itg) for i in SP.keys())
     TotalLoad = LoadLost + LoadServed + LoadTrans + GridLoad
     GridExport = sum(Probs[i] * sum(SP[i].getVarByName(f'Y_ESGrid[{itg[0]},{itg[1]},{itg[2]}]').x +
                                     SP[i].getVarByName(f'Y_PVGrid[{itg[0]},{itg[1]},{itg[2]}]').x +
                                     SP[i].getVarByName(f'Y_DGGrid[{itg[0]},{itg[1]},{itg[2]}]').x
-                                    for itg in Y_itg)for i in SP.keys())
+                                    for itg in Y_itg) for i in SP.keys())
 
     #  Resilience Metrics
-    LoadFail = [0 for s in SP.keys()]
+    AvgRobustness = []
     LoadServedOutage, TotalLoadOutage = [], []
     LoadServedNoTrans, TotalLoadNoTrans = [], []
     LoadServedNoOutage, TotalLoadNoOutage = [], []
@@ -126,59 +119,81 @@ if __name__ == '__main__':
             outage_hours = range(16, 169)
         else:
             outage_hours = range(16, 16 + Outage_scens[scen] + 1)
+        AllLoadFails, AllOutages = 0, 0
+        for i in RNGSta:
+            for g in RNGMonth:
+                Fail = Outage_scens[scen]
+                for oh in outage_hours[:len(outage_hours)-4]:
+                    yll1 = SP[scen].getVarByName(f'Y_LL[{i},{oh},{g}]').x >=\
+                           0.5 * (1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][oh+1-1]
+                    yll2 = SP[scen].getVarByName(f'Y_LL[{i},{oh+1},{g}]').x >= \
+                           0.5 * (1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][oh+2-1]
+                    yll3 = SP[scen].getVarByName(f'Y_LL[{i},{oh+2},{g}]').x >= \
+                           0.5 * (1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][oh+3-1]
+                    yll4 = SP[scen].getVarByName(f'Y_LL[{i},{oh+3},{g}]').x >= \
+                           0.5 * (1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][oh+4-1]
+                    if yll1+yll2+yll3+yll4 == 4:
+                        Fail = oh - 16
+                        break
+                AllLoadFails += Fail
+                AllOutages += Outage_scens[scen]
+        AvgRobustness.append(AllLoadFails/AllOutages)
 
-        for oh in outage_hours:
-            if SP[scen].getVarByName(f'Y_LL[1,{oh},8]').x != 0:
-                LoadFail[scen] = oh - 16
-                break
         LoadServedOutage.append(sum(SP[scen].getVarByName(f'Y_ESL[{i},{t},{g}]').x +
                                     SP[scen].getVarByName(f'Y_DGL[{i},{t},{g}]').x +
                                     SP[scen].getVarByName(f'Y_PVL[{i},{t},{g}]').x
                                     for i in RNGSta for t in outage_hours for g in RNGMonth))
-        TotalLoadOutage.append(sum((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][t-1]
+        TotalLoadOutage.append(sum((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][t - 1]
                                    for i in RNGSta for t in outage_hours for g in RNGMonth))
 
         LoadServedNoTrans.append(sum(SP[scen].getVarByName(f'Y_ESL[{i},{t},{g}]').x +
-                                    SP[scen].getVarByName(f'Y_DGL[{i},{t},{g}]').x +
-                                    SP[scen].getVarByName(f'Y_PVL[{i},{t},{g}]').x
-                                    for i in RNGSta for g in (1, 2, 3, 6, 7, 8, 9) for t in outage_hours if t in DontTrans[g]))
-        TotalLoadNoTrans.append(sum((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][t-1]
-                                    for i in RNGSta for g in (1, 2, 3, 6, 7, 8, 9) for t in outage_hours if t in DontTrans[g]))
+                                     SP[scen].getVarByName(f'Y_DGL[{i},{t},{g}]').x +
+                                     SP[scen].getVarByName(f'Y_PVL[{i},{t},{g}]').x
+                                     for i in RNGSta for g in (1, 2, 3, 6, 7, 8, 9) for t in outage_hours if
+                                     t in DontTrans[g]))
+        TotalLoadNoTrans.append(sum((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][t - 1]
+                                    for i in RNGSta for g in (1, 2, 3, 6, 7, 8, 9) for t in outage_hours if
+                                    t in DontTrans[g]))
 
         LoadServedNoOutage.append(sum(SP[scen].getVarByName(f'Y_ESL[{i},{t},{g}]').x +
-                                    SP[scen].getVarByName(f'Y_DGL[{i},{t},{g}]').x +
-                                    SP[scen].getVarByName(f'Y_PVL[{i},{t},{g}]').x
-                                    for i in RNGSta for t in RNGTime if t not in outage_hours for g in RNGMonth))
-        TotalLoadNoOutage.append(sum((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear *  Load_scens[scen][g][t - 1]
-                                    for i in RNGSta for t in RNGTime if t not in outage_hours for g in RNGMonth))
+                                      SP[scen].getVarByName(f'Y_DGL[{i},{t},{g}]').x +
+                                      SP[scen].getVarByName(f'Y_PVL[{i},{t},{g}]').x
+                                      for i in RNGSta for t in RNGTime if t not in outage_hours for g in RNGMonth))
+        TotalLoadNoOutage.append(sum((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][t - 1]
+                                     for i in RNGSta for t in RNGTime if t not in outage_hours for g in RNGMonth))
 
-    Robustness = 1 - eta_i * sum([Probs[s] * LoadFail[s]/Outage_scens[s] for s in SP.keys()])
-    Redundancy =  eta_i * sum([Probs[s] * LoadServedOutage[s]/TotalLoadOutage[s] for s in SP.keys()])
-    Resourcefullness =  eta_i * sum([Probs[s] * LoadServedNoTrans[s]/TotalLoadNoTrans[s] for s in SP.keys()])
+    Robustness = eta_i * sum([Probs[s] * AvgRobustness[s] for s in SP.keys()])
+    Redundancy = eta_i * sum([Probs[s] * LoadServedOutage[s] / TotalLoadOutage[s] for s in SP.keys()])
+    Resourcefullness = eta_i * sum([Probs[s] * LoadServedNoTrans[s] / TotalLoadNoTrans[s] for s in SP.keys()])
     Bill1 = sum([Probs[s] * TotalLoadNoOutage[s] * GridPlus for s in SP.keys()])
     Bill2 = sum([Probs[s] * (eta_i * LoadServedNoOutage[s] * LoadPrice +
-                            (TotalLoadNoOutage[s] - eta_i * LoadServedNoOutage[s]) * GridPlus)
-                for s in SP.keys()])
-    #  Other Reports
-    report =   {'Investment': sum(C[ld[1]] * X1[ld] for ld in X_ld),
-                'Reinvestment': sum(C[ld[1]] * X2[ld] for ld in X_ld),
-                'Avg Recourse': sum(Probs[s] * SP[s].ObjVal for s in SP.keys()),
-                'Load Lost%': LoadLost / TotalLoad,
-                'Load Served%': LoadServed / TotalLoad,
-                'Load Transferred%': LoadTrans / TotalLoad,
-                'Grid Load%': GridLoad / TotalLoad,
-                'Grid Exported': GridExport,
-                'Bill Before': Bill1,
-                'Bill After': Bill2,
-                'Robustness': Robustness,
-                'Redundancy': Redundancy,
-                'Resourcefulness': Resourcefullness}
+                             (TotalLoadNoOutage[s] - eta_i * LoadServedNoOutage[s]) * GridPlus)
+                 for s in SP.keys()])
+    GridImport = sum([Probs[s] * (TotalLoadNoOutage[s] - eta_i * LoadServedNoOutage[s]) for s in SP.keys()])
+    #  Save reports
+    report = {'Investment': sum(C[ld[1]] * X1[ld] for ld in X_ld),
+              'Reinvestment': sum(C[ld[1]] * X2[ld] for ld in X_ld),
+              'Avg Recourse': sum(Probs[s] * SP[s].ObjVal for s in SP.keys()),
+              'Load Lost%': LoadLost / TotalLoad,
+              'Load Served%': LoadServed / TotalLoad,
+              'Load Transferred%': LoadTrans / TotalLoad,
+              'Grid Load%': GridLoad / TotalLoad,
+              'Grid Exported': GridExport,
+              'Grid Imported': GridImport,
+              'Bill Before': Bill1,
+              'Bill After': Bill2,
+              'Robustness': Robustness,
+              'Redundancy': Redundancy,
+              'Resourcefulness': Resourcefullness,
+              'ES1': sum(X1[ld] for ld in X_ld if ld[1] == 1),
+              'PV1': sum(X1[ld] for ld in X_ld if ld[1] == 2),
+              'DG1': sum(X1[ld] for ld in X_ld if ld[1] == 3),
+              'ES2': sum(X2[ld] for ld in X_ld if ld[1] == 1),
+              'PV2': sum(X2[ld] for ld in X_ld if ld[1] == 2),
+              'DG2': sum(X2[ld] for ld in X_ld if ld[1] == 3)
+              }
     pd.DataFrame(report, index=[0]).to_csv('Report.csv')
 
-
-
-
-    # Previous code: No use
     '''k, t, t_last = 1, {}, 0  # Iteration number
     epsilon1 = 0.1   # Stopping tolerance
 
@@ -266,10 +281,4 @@ if __name__ == '__main__':
             k += 1
         else:
             break'''
-
-
-
-
-
-
-
+    # Previous code: No use
