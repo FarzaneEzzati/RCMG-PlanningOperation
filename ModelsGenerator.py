@@ -13,6 +13,46 @@ warnings.filterwarnings('ignore')
 env = gp.Env()
 env.setParam('OutputFlag', 0)
 
+
+# Specify the community the model is being built 1: sunnyside, 2:Dove Springs, 3:Rogers Washington
+com = 1
+com_folder = {1: 'HarrisCounty-SS',
+              2: 'TravisCounty-DS',
+              3: 'TravisCounty-RW'}
+
+# Community-dependent data
+b = 1
+UB_dict = {1: {(1, 1): b*300, (1, 2): b*114, (1, 3): b*100,
+               (2, 1): b*300, (2, 2): b*396, (2, 3): b*100,
+               (3, 1): b*300, (3, 2): b*141, (3, 3): b*100,
+               (4, 1): b*300, (4, 2): b*133, (4, 3): b*100,
+               (5, 1): b*300, (5, 2): b*246, (5, 3): b*100},
+
+           2: {(1, 1): 600, (1, 2): 318, (1, 3): 100,
+               (2, 1): 600, (2, 2): 299, (2, 3): 100,
+               (3, 1): 600, (3, 2): 2142, (3, 3): 100,
+               (4, 1): 600, (4, 2): 1190, (4, 3): 100},
+
+           3: {(1, 1): 300, (1, 2): 930, (1, 3): 100,
+               (2, 1): 300, (2, 2): 40, (2, 3): 100,
+               (3, 1): 300, (3, 2): 334, (3, 3): 100}}
+
+LocationPrice = {1: {1: 18164, 2: 62936, 3: 22469, 4: 21467, 5: 39160},
+                 2: {1: 87382, 2: 82077, 3: 588080, 4: 326867},
+                 3: {1: 285579, 2: 12443, 3: 102558}}
+
+GridPlus_dict = {1: 0.15,
+                 2: 0.14,
+                 3: 0.14}
+GridMinus_dict = {1: 0.12,
+                  2: 0.097,
+                  3: 0.097}
+
+VoLL_dict = {1: 1.59,
+             2: 2,
+             3: 1}
+
+
 S = 30
 # Preparing Power Outage Scenarios
 if True:
@@ -26,7 +66,7 @@ if True:
     PV_probs = {i: 1 for i in range(S)}
     month_counter = 1
     for m in ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']:
-        dpv = pd.read_csv(f'Scenarios/PV/Sunnyside/PVscenario-{m}.csv')
+        dpv = pd.read_csv(f'Scenarios/PV/{com_folder[com]}/PVscenario-{m}.csv')
         cols = dpv.columns[2:27]
 
         for i in range(S):
@@ -42,8 +82,8 @@ if True:
     Load_probs = {i: 1 for i in range(S)}
     month_counter = 1
     for m in ['JanFeb', 'MarApr', 'MayJun', 'JulAug', 'SepOct', 'NovDec']:
-        dw = pd.read_csv(f'Scenarios/Load Demand/HarrisCounty/LoadScenarios-{m}-w.csv')
-        de = pd.read_csv(f'Scenarios/Load Demand/HarrisCounty/LoadScenarios-{m}-e.csv')
+        dw = pd.read_csv(f'Scenarios/Load Demand/{com_folder[com]}/LoadScenarios-{m}-w.csv')
+        de = pd.read_csv(f'Scenarios/Load Demand/{com_folder[com]}/LoadScenarios-{m}-e.csv')
         cols = dw.columns[2:99]
         for i in range(S):
             Load_probs[i] = Load_probs[i] * (dw['probs'].iloc[i] * de['probs'].iloc[i])
@@ -74,9 +114,10 @@ with open('Data/ScenarioProbabilities.pkl', 'wb') as handle:
     pickle.dump(norm_probs, handle)
 handle.close()
 
+
 # Counts
 T = 168  # count of hours per week
-LCount = 5  # count of locations
+LCount = len(LocationPrice[com])  # count of locations
 DVCCount = 3  # count of devices
 MCount = 12  # count of months
 OutageStart = 16  # hour that outage starts
@@ -104,8 +145,8 @@ DontTrans = {1: winter_peak, 2: winter_peak, 3: winter_peak,
 
 # Sensitivity Parameters
 InvImportance = 1
-VoLL_sensitivity = 20
-TransMax = 0.25
+VoLL_sensitivity = 1
+TransMax = 0.45
 ReInvsYear = 10
 Operational_Rate = 0.01
 Labor_Factor = 0.15
@@ -121,13 +162,11 @@ PF_Factor = 1 / (1 + Interest_Rate) ** ReInvsYear
 C = {1: (1 + Labor_Factor) * 300, 2: (1 + Labor_Factor) * 2780, 3: (1 + Labor_Factor) * 400}  # order is: [ES, PV, DG]
 CO1 = {i: C[i] * (1 + Operational_Rate * PA_Factor1) for i in (1, 2, 3)}
 CO2 = {i: C[i] * (1 + Operational_Rate * PA_Factor2) for i in (1, 2, 3)}
-LocationPrice = {1: 18164, 2: 62936, 3: 22469, 4: 21467, 5: 39160}
-F = {j: LocationPrice[j] for j in LocationPrice}
-UB = {(1, 1): 300, (1, 2): 114, (1, 3): 100,
-    (2, 1): 300, (2, 2): 396, (2, 3): 100,
-    (3, 1): 300, (3, 2): 141, (3, 3): 100,
-    (4, 1): 300, (4, 2): 133, (4, 3): 100,
-    (5, 1): 300, (5, 2): 246, (5, 3): 100}  # Upper bound of devices capacity (location, device)
+F = {j: LocationPrice[com][j] for j in LocationPrice[com]}
+
+
+
+UB = UB_dict[com]  # Upper bound of devices capacity (location, device)
 
 # Efficiencies and performances
 ES_gamma = 0.85
@@ -137,17 +176,16 @@ FuelPrice = 3.61  # $/gal
 DGEffic = DG_consumption * FuelPrice  # Fuel cost of DG: $/kWh
 ES_d = 0.02
 
-# Prices
+# Electricity Prices
 zeta = 0.8  # The parameter specifying what percentage of electricity price be determined as price to sell power to households
-GridPlus = 0.1812  # $/kWh (importing price of power from the grid)
-GridMinus = 0.1207  # exporting price of power back to grid
+GridPlus = GridPlus_dict[com]  # $/kWh (importing price of power from the grid)
+GridMinus = GridMinus_dict[com]  # exporting price of power back to grid
 LoadPrice = zeta * GridPlus
 PVCurPrice = GridMinus
 DGCurPrice = GridMinus + DGEffic
 
-VoLL = 1.59 * VoLL_sensitivity * GridPlus
+VoLL = VoLL_dict[com] * VoLL_sensitivity * GridPlus
 VoLL_hourly = {i: {} for i in RNGMonth}
-TransPrice = VoLL * TransMax
 for g in RNGMonth:
     for tt in RNGTime:
         if tt in DontTrans[g]:
@@ -174,6 +212,7 @@ Y_1tg = [(1, t, g) for t in RNGTime for g in RNGMonth]
 Y_2tg = [(2, t, g) for t in RNGTime for g in RNGMonth]
 eta_M = -100000000
 Xkeys = range(len(X_ld) + LCount)
+
 
 def MasterProb():
     master = gp.Model('MasterProb', env=env)
@@ -275,7 +314,7 @@ def SubProb(scen):
                 # Limits on energy level in ES
                 sub.addConstr(Y_E[(i, t, g)] >= SOC_LB * Total_ES, name='E_LB')
 
-                sub.addConstr(-Y_E[(i, t, g)] >= -SOC_UB * Total_ES, name='E_UB')
+                sub.addConstr(Y_E[(i, t, g)] <= SOC_UB * Total_ES, name='E_UB')
 
                 # PV power decomposition
                 sub.addConstr(eta_i * (Y_PVL[(i, t, g)] + Y_PVGrid[(i, t, g)]) +
@@ -356,178 +395,6 @@ def SubProb(scen):
     with open(f'Models/Sub{scen}-Tr.pkl', 'wb') as f:
         pickle.dump([TMatrix, rVector], f)
     f.close()
-
-
-
-class DetModel:
-    def __init__(self):
-        real = gp.Model(env=env)
-        X = {}
-        for l in RNGLoc:
-            for d in RNGDvc:
-                X[(1, l, d)] = real.addVar(vtype=GRB.INTEGER, ub=UB[d], name=f'X[1,{l},{d}]')
-        for l in RNGLoc:
-            for d in RNGDvc:
-                X[(2, l, d)] = real.addVar(vtype=GRB.INTEGER, ub=UB[d], name=f'X[2,{l},{d}]')
-
-        Capital = 0
-        for l in RNGLoc:
-            # Investment constraint
-            real.addConstr(quicksum(X[(1, l, d)] * C[d] for d in RNGDvc) <= Budget1, name='IB')
-            # ReInvestment constraint
-            real.addConstr(quicksum(X[(2, l, d)] * C[d] for d in RNGDvc) <= Budget2, name='RIB')
-
-            # Formulate capital cost
-            Capital += quicksum((X[(1, l, d)] + X[(2, l, d)]) * CO1[d] for d in RNGDvc)
-
-        '''Scheduling variables'''
-        if True:
-            U_E = real.addVars(Y_itgs, vtype=GRB.BINARY, name=f'U_E')  # Charge/discharge binary
-            U_G = real.addVars(Y_itgs, vtype=GRB.BINARY, name=f'U_G')  # Import/export binary
-            Y_PVES = real.addVars(Y_itgs, name=f'Y_PVES')  # PV to ES (1 before reinvestment, 2 after)
-            Y_DGES = real.addVars(Y_itgs, name=f'Y_DGES')  # DE to ES
-            Y_GridES = real.addVars(Y_itgs, name=f'Y_GridES')  # Grid to ES
-            Y_PVL = real.addVars(Y_itgs, name=f'Y_PV')  # Pv to L
-            Y_DGL = real.addVars(Y_itgs, name=f'Y_DGL')  # Dg to L
-            Y_ESL = real.addVars(Y_itgs, name=f'Y_ESL')  # ES to L
-            Y_GridL = real.addVars(Y_itgs, name=f'Y_GridL')  # Grid to L
-            Y_PVCur = real.addVars(Y_itgs, name=f'Y_PVCur')  # PV Curtailed
-            Y_DGCur = real.addVars(Y_itgs, name=f'Y_DGCur')  # DG curtailed
-            Y_PVGrid = real.addVars(Y_itgs, name=f'Y_DGGrid')  # PV to Grid
-            Y_DGGrid = real.addVars(Y_itgs, name=f'Y_PVGrid')  # Dg to Grid
-            Y_ESGrid = real.addVars(Y_itgs, name=f'Y_ESGrid')  # ES to Grid
-            Y_E = real.addVars(Y_itgs, name=f'Y_E')  # ES level of energy
-            Y_LH = real.addVars(Y_itgs, name=f'Y_LH')  # Load served
-            Y_LL = real.addVars(Y_itgs, name=f'Y_LL')  # Load lost
-            Y_LT = real.addVars(Y_ittgs, name=f'Y_LT')  # Load transferred
-        '''Specify Load Demand, PV, Outage Duration for the scenario s'''
-        if True:
-            # Define the load profiles and PV profiles
-            # Define the load profiles and PV profiles
-            # Define the load profiles and PV profiles
-            L = {(i, t, g, s): (1 + 0.05 * s) * 20 * Load_scens[f'Month {g}'].iloc[t - 1]
-                 for i in RNGSta for t in RNGTime for g in RNGMonth for s in RNGScen}
-
-            PV = {(t, g, s): (1 + 0.05 * s) * PV_scens[f'Month {g}'].iloc[t - 1]
-                  for t in RNGTime for g in RNGMonth for s in RNGScen}
-            Out_Time = {(g, s): 0 for s in RNGScen for g in RNGMonth}
-            for s in RNGScen:
-                if Outage_scens[s] != 0:
-                    for g in RNGMonth:
-                        Out_Time[(g, s)] = [OutageStart + j for j in range(int(Outage_scens[s]))]
-        '''Scheduling constraints'''
-        for s in RNGScen:
-            for i in RNGSta:  # RNGSta = (1, 2)
-                for g in RNGMonth:
-                    # ES levels
-                    real.addConstr(Y_E[(i, 1, g, s)] == SOC_UB * quicksum(
-                        (1 - (i - 1) * ES_d) ** ReInvsYear * X[(1, l, 1)] + (i - 1) * X[(2, l, 1)] for l in RNGLoc))
-                    # Only use the summation of ES capacity before/after reinvestment for rhs update in ABC BB-D
-
-                    for t in RNGTime:
-                        # Limits on energy level in ES
-                        real.addConstr(Y_E[(i, t, g, s)] >= SOC_LB * quicksum(
-                            (1 - (i - 1) * ES_d) ** ReInvsYear * X[(1, l, 1)] + (i - 1) * X[(2, l, 1)] for l in RNGLoc))
-
-                        real.addConstr(-Y_E[(i, t, g, s)] >= -SOC_UB * quicksum(
-                            (1 - (i - 1) * ES_d) ** ReInvsYear * X[(1, l, 1)] + (i - 1) * X[(2, l, 1)] for l in RNGLoc))
-
-                        # PV power decomposition
-                        real.addConstr((Y_PVL[(i, t, g, s)] + Y_PVES[(i, t, g, s)] +
-                                        Y_PVCur[(i, t, g, s)] + Y_PVGrid[(i, t, g, s)]) ==
-                                       PV[(t, g, s)] * quicksum(
-                            X[(1, l, 2)] + (i - 1) * X[(2, l, 2)] for l in RNGLoc))
-
-                        # DG power decomposition
-                        real.addConstr(Y_DGL[(i, t, g, s)] + Y_DGES[(i, t, g, s)] +
-                                       Y_DGGrid[(i, t, g, s)] + Y_DGCur[(i, t, g, s)] ==
-                                       quicksum(X[(1, l, 3)] + (i - 1) * X[(2, l, 3)] for l in RNGLoc))
-
-                        # Assigned load decomposition
-                        real.addConstr(Y_LH[(i, t, g, s)] ==
-                                       eta_i * (Y_ESL[(i, t, g, s)] + Y_DGL[(i, t, g, s)] + Y_PVL[(i, t, g, s)]) +
-                                       Y_GridL[(i, t, g, s)], name='')
-
-                        real.addConstr(Y_LH[(i, t, g, s)] + Y_LL[(i, t, g, s)] +
-                                       quicksum(Y_LT[(i, t, to, g, s)] for to in range(t, T + 1)) ==
-                                       L[(i, t, g, s)], name='')
-
-                        if t in DontTrans:
-                            # Don't allow transfer
-                            real.addConstrs(Y_LT[(i, t, to, g, s)] == 0 for to in range(t, T + 1))
-                        else:
-                            # Max load transfer
-                            real.addConstr(TransMax * L[(i, t, g, s)] -
-                                           quicksum(Y_LT[(i, t, to, g, s)] for to in range(t, T + 1)) >= 0, name='')
-
-                        # Load transfer and E level
-                        real.addConstr(Y_E[(i, t, g, s)] - quicksum(Y_LT[(i, to, t, g, s)] for to in range(1, t)) >= 0,
-                                       name='')
-
-                        # Prohibited transfer to self
-                        real.addConstr(Y_LT[(i, t, t, g, s)] == 0, name='')
-
-                        # ES charging/discharging constraints
-                        real.addConstr((UB[1] + (i - 1) * UB[1]) * U_E[(i, t, g, s)] -
-                                       (Y_ESL[(i, t, g, s)] + Y_ESGrid[(i, t, g, s)]) >= 0, name='')
-                        real.addConstr((UB[1] + (i - 1) * UB[1]) * (1 - U_E[(i, t, g, s)]) -
-                                       (Y_PVES[(i, t, g, s)] + Y_GridES[(i, t, g, s)] + Y_DGES[(i, t, g, s)]) >= 0,
-                                       name='')
-
-                        real.addConstr(
-                            (UB[1] + UB[2] + UB[3] + (i - 1) * (UB[1] + UB[2] + UB[3])) * U_G[(i, t, g, s)] -
-                            (Y_ESGrid[(i, t, g, s)] + Y_PVGrid[(i, t, g, s)] + Y_DGGrid[(i, t, g, s)]) >= 0,
-                            name='')
-                        real.addConstr(
-                            (UB[1] + UB[2] + UB[3] + (i - 1) * (UB[1] + UB[2] + UB[3])) * (1 - U_G[(i, t, g, s)]) -
-                            (Y_GridES[(i, t, g, s)] + Y_GridL[(i, t, g, s)]) >= 0, name='')
-
-                        # Prohibited transaction with the grid during outage
-                        if Out_Time[(g, s)] != 0:
-                            for ot in Out_Time[(g, s)]:
-                                real.addConstr(Y_GridL[(i, ot, g, s)] + Y_GridES[(i, ot, g, s)] == 0, name='')
-                                real.addConstr(Y_PVGrid[(i, ot, g, s)] + Y_ESGrid[(i, ot, g, s)] +
-                                               Y_DGGrid[(i, ot, g, s)] == 0, name='')
-                                real.addConstrs(U_G[(i, ot, g, s)] == 0)
-
-                    for t in RNGTimeMinus:
-                        # Balance of power flow
-                        real.addConstr(Y_E[(i, t + 1, g, s)] ==
-                                       Y_E[(i, t, g, s)] +
-                                       ES_gamma * (Y_PVES[(i, t, g, s)] + Y_DGES[(i, t, g, s)] + eta_i * Y_GridES[
-                            (i, t, g, s)]) -
-                                       (eta_i / ES_gamma) * (Y_ESL[(i, t, g, s)] + Y_ESGrid[(i, t, g, s)]), name='')
-        '''Costs'''
-        if True:
-            Total_cost = 0
-            for s in RNGScen:
-                Costs = 0
-                for i in RNGSta:
-                    for g in RNGMonth:
-                        for t in RNGTime:
-                            # Curtailment cost
-                            Costs += PVCurPrice * (Y_PVCur[(i, t, g, s)] + Y_DGCur[(i, t, g, s)])
-                            # Losing load cost
-                            Costs += VoLL * Y_LL[(i, t, g, s)]
-                            # DG cost
-                            Costs += DGEffic * (Y_DGL[(i, t, g, s)] + Y_DGGrid[(i, t, g, s)] +
-                                                Y_DGCur[(i, t, g, s)] + Y_DGES[(i, t, g, s)])
-                            # Import/Export cost
-                            Costs += GridPlus * Y_GridES[(i, t, g, s)] - \
-                                     GridMinus * (Y_PVGrid[(i, t, g, s)] + Y_ESGrid[(i, t, g, s)] + Y_DGGrid[
-                                (i, t, g, s)]) - \
-                                     LoadPrice * (Y_ESL[(i, t, g, s)] + Y_DGL[(i, t, g, s)] + Y_PVL[(i, t, g, s)])
-
-                            # DRP cost
-                            Costs += TransPrice * quicksum(Y_LT[(i, to, t, g, s)] for to in RNGTime)
-
-                Total_cost += norm_probs[s] * GenPar * Costs
-            real.setObjective(Total_cost + Capital, sense=GRB.MINIMIZE)
-
-        '''Save model data'''
-        if True:
-            real.write(f'Models/real.mps')
-            print(real)
 
 
 if __name__ == '__main__':

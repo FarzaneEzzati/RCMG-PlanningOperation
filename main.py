@@ -2,7 +2,7 @@ import pickle
 import gurobipy as gp
 import pandas as pd
 from tqdm import tqdm
-import numpy as np
+import copy
 from ModelsGenerator import Xkeys, X_ld, C, Load_scens, AG_scens, Outage_scens, DontTrans, Y_itg, Y_ittg, \
     RNGTime, LoadPrice, GridPlus, RNGSta, RNGMonth, ReInvsYear, eta_i
 
@@ -14,7 +14,7 @@ env2.setParam('OutputFlag', 0)
 with open('Data/ScenarioProbabilities.pkl', 'rb') as handle:
     Probs = pickle.load(handle)
 handle.close()
-Probs = {i: Probs[i] for i in range(20)}
+Probs = {i: Probs[i] for i in range(30)}
 
 # Open subproblems
 SP, TMatrices, rVectors = {}, {}, {}
@@ -64,8 +64,8 @@ if __name__ == '__main__':
     master = gp.read('Models/Master.mps', env=env)
     master._vars = master.getVars()
     master.Params.LazyConstraints = 1
-    master.Params.MIPGap = 0.02
-    master.Params.TimeLimit = 2000
+    '''master.Params.MIPGap = 0.00002
+    master.Params.TimeLimit = 2000'''
     master.Params.LogFile = "master_log.log"
     master.Params.DegenMoves = 0
     master.optimize(BendersCut)
@@ -93,91 +93,92 @@ if __name__ == '__main__':
     pd.DataFrame(X2, index=[0]).to_csv('X2.csv') # subproblem solution save
 
     print('Reporting started')
-    LoadLost = sum(Probs[i] * sum(SP[i].getVarByName(f'Y_LL[{itg[0]},{itg[1]},{itg[2]}]').x
-                                  for itg in Y_itg) for i in SP.keys())
-    LoadServed = sum(Probs[i] * sum(SP[i].getVarByName(f'Y_ESL[{itg[0]},{itg[1]},{itg[2]}]').x +
-                                    SP[i].getVarByName(f'Y_DGL[{itg[0]},{itg[1]},{itg[2]}]').x +
-                                    SP[i].getVarByName(f'Y_PVL[{itg[0]},{itg[1]},{itg[2]}]').x
-                                    for itg in Y_itg) for i in SP.keys())
-    LoadTrans = sum(Probs[i] * sum(SP[i].getVarByName(f'Y_LT[{ittg[0]},{ittg[1]},{ittg[2]},{ittg[3]}]').x
-                                   for ittg in Y_ittg) for i in SP.keys())
-    GridLoad = sum(Probs[i] * sum(SP[i].getVarByName(f'Y_GridL[{itg[0]},{itg[1]},{itg[2]}]').x
-                                  for itg in Y_itg) for i in SP.keys())
-    TotalLoad = LoadLost + LoadServed + LoadTrans + GridLoad
-    GridExport = sum(Probs[i] * sum(SP[i].getVarByName(f'Y_ESGrid[{itg[0]},{itg[1]},{itg[2]}]').x +
-                                    SP[i].getVarByName(f'Y_PVGrid[{itg[0]},{itg[1]},{itg[2]}]').x +
-                                    SP[i].getVarByName(f'Y_DGGrid[{itg[0]},{itg[1]},{itg[2]}]').x
-                                    for itg in Y_itg) for i in SP.keys())
-
     #  Resilience Metrics
-    AvgRobustness = []
-    LoadServedOutage, TotalLoadOutage = [], []
-    LoadServedNoTrans, TotalLoadNoTrans = [], []
-    LoadServedNoOutage, TotalLoadNoOutage = [], []
+    RobList = []
+    LSOList, LOList = [], []  # Load Served in Outage List, Load in Outage List
+    LSnTList, LnTList = [], []  # Load Served when no Transfer List
+    LSnOList, LnOList = [], []  # Load Served when no Outage List
+    LLOList = []  # Load Lost when Outage
+    LTOList = []  # Load Transed when Outage
+    ImportList = []
     for scen in SP.keys():
         if Outage_scens[scen] >= 168 - 16:
             outage_hours = range(16, 169)
         else:
             outage_hours = range(16, 16 + Outage_scens[scen] + 1)
+
         AllLoadFails, AllOutages = 0, 0
+        AllLoadTrans = 0
         for i in RNGSta:
             for g in RNGMonth:
-                Fail = Outage_scens[scen]
-                for oh in outage_hours[:len(outage_hours)-4]:
+                Fail = copy.copy(Outage_scens[scen])
+                for oh in outage_hours[:len(outage_hours)-2]:
                     yll1 = SP[scen].getVarByName(f'Y_LL[{i},{oh},{g}]').x >=\
-                           0.5 * (1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][oh+1-1]
+                           0.75 * ((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear) * Load_scens[scen][g][oh-1]
                     yll2 = SP[scen].getVarByName(f'Y_LL[{i},{oh+1},{g}]').x >= \
-                           0.5 * (1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][oh+2-1]
-                    yll3 = SP[scen].getVarByName(f'Y_LL[{i},{oh+2},{g}]').x >= \
-                           0.5 * (1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][oh+3-1]
-                    yll4 = SP[scen].getVarByName(f'Y_LL[{i},{oh+3},{g}]').x >= \
-                           0.5 * (1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][oh+4-1]
-                    if yll1+yll2+yll3+yll4 == 4:
+                          0.75 * ((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear) * Load_scens[scen][g][oh]
+
+                    if (yll1, yll2) == (True, True):
                         Fail = oh - 16
                         break
                 AllLoadFails += Fail
                 AllOutages += Outage_scens[scen]
-        AvgRobustness.append(AllLoadFails/AllOutages)
 
-        LoadServedOutage.append(sum(SP[scen].getVarByName(f'Y_ESL[{i},{t},{g}]').x +
-                                    SP[scen].getVarByName(f'Y_DGL[{i},{t},{g}]').x +
-                                    SP[scen].getVarByName(f'Y_PVL[{i},{t},{g}]').x
+                for oh in outage_hours:
+                    AllLoadTrans += sum(SP[scen].getVarByName(f'Y_LT[{i},{oh},{tt},{g}]').x
+                                        for tt in range(oh, outage_hours[-1]+1))
+        RobList.append(AllLoadFails/AllOutages)
+
+        LOList.append(sum(((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear) * Load_scens[scen][g][t - 1]
+                                  for i in RNGSta for t in outage_hours for g in RNGMonth))
+
+        LLOList.append(sum(SP[scen].getVarByName(f'Y_LL[{i},{t},{g}]').x
+                                  for i in RNGSta for t in outage_hours for g in RNGMonth))
+
+        LSOList.append(sum(SP[scen].getVarByName(f'Y_ESL[{i},{t},{g}]').x +
+                          SP[scen].getVarByName(f'Y_DGL[{i},{t},{g}]').x +
+                          SP[scen].getVarByName(f'Y_PVL[{i},{t},{g}]').x
                                     for i in RNGSta for t in outage_hours for g in RNGMonth))
-        TotalLoadOutage.append(sum((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][t - 1]
-                                   for i in RNGSta for t in outage_hours for g in RNGMonth))
 
-        LoadServedNoTrans.append(sum(SP[scen].getVarByName(f'Y_ESL[{i},{t},{g}]').x +
+        LTOList.append(AllLoadTrans)
+
+        LSnTList.append(sum(SP[scen].getVarByName(f'Y_ESL[{i},{t},{g}]').x +
                                      SP[scen].getVarByName(f'Y_DGL[{i},{t},{g}]').x +
                                      SP[scen].getVarByName(f'Y_PVL[{i},{t},{g}]').x
                                      for i in RNGSta for g in (1, 2, 3, 6, 7, 8, 9) for t in outage_hours if
                                      t in DontTrans[g]))
-        TotalLoadNoTrans.append(sum((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][t - 1]
+
+        LnTList.append(sum(((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear) * Load_scens[scen][g][t - 1]
                                     for i in RNGSta for g in (1, 2, 3, 6, 7, 8, 9) for t in outage_hours if
                                     t in DontTrans[g]))
 
-        LoadServedNoOutage.append(sum(SP[scen].getVarByName(f'Y_ESL[{i},{t},{g}]').x +
+        LSnOList.append(sum(SP[scen].getVarByName(f'Y_ESL[{i},{t},{g}]').x +
                                       SP[scen].getVarByName(f'Y_DGL[{i},{t},{g}]').x +
                                       SP[scen].getVarByName(f'Y_PVL[{i},{t},{g}]').x
                                       for i in RNGSta for t in RNGTime if t not in outage_hours for g in RNGMonth))
-        TotalLoadNoOutage.append(sum((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear * Load_scens[scen][g][t - 1]
+        LnOList.append(sum(((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear) * Load_scens[scen][g][t - 1]
                                      for i in RNGSta for t in RNGTime if t not in outage_hours for g in RNGMonth))
 
-    Robustness = eta_i * sum([Probs[s] * AvgRobustness[s] for s in SP.keys()])
-    Redundancy = eta_i * sum([Probs[s] * LoadServedOutage[s] / TotalLoadOutage[s] for s in SP.keys()])
-    Resourcefullness = eta_i * sum([Probs[s] * LoadServedNoTrans[s] / TotalLoadNoTrans[s] for s in SP.keys()])
-    Bill1 = sum([Probs[s] * TotalLoadNoOutage[s] * GridPlus for s in SP.keys()])
-    Bill2 = sum([Probs[s] * (eta_i * LoadServedNoOutage[s] * LoadPrice +
-                             (TotalLoadNoOutage[s] - eta_i * LoadServedNoOutage[s]) * GridPlus)
+    Robustness = sum([Probs[s] * RobList[s] for s in SP.keys()])
+    Redundancy = eta_i * sum([Probs[s] * LSOList[s] / LOList[s] for s in SP.keys()])
+    Resourcefullness = eta_i * sum([Probs[s] * LSnTList[s] / LnTList[s] for s in SP.keys()])
+    Bill1 = sum([Probs[s] * LnOList[s] * GridPlus for s in SP.keys()])
+    Bill2 = sum([Probs[s] * (eta_i * LSnOList[s] * LoadPrice + (LnOList[s] - eta_i * LSnOList[s]) * GridPlus)
                  for s in SP.keys()])
-    GridImport = sum([Probs[s] * (TotalLoadNoOutage[s] - eta_i * LoadServedNoOutage[s]) for s in SP.keys()])
+    GridExport = sum(Probs[scen] * sum(SP[scen].getVarByName(f'Y_ESGrid[{itg[0]},{itg[1]},{itg[2]}]').x +
+                                    SP[scen].getVarByName(f'Y_PVGrid[{itg[0]},{itg[1]},{itg[2]}]').x +
+                                    SP[scen].getVarByName(f'Y_DGGrid[{itg[0]},{itg[1]},{itg[2]}]').x
+                                    for itg in Y_itg) for scen in SP.keys())
+    GridImport = sum([Probs[scen] * (LnOList[scen] - eta_i * LSnOList[scen]) for scen in SP.keys()])
+    GridImportPerc = sum(Probs[scen] * (LnOList[scen] - eta_i * LSnOList[scen])/LnOList[scen] for scen in SP.keys())
     #  Save reports
     report = {'Investment': sum(C[ld[1]] * X1[ld] for ld in X_ld),
               'Reinvestment': sum(C[ld[1]] * X2[ld] for ld in X_ld),
-              'Avg Recourse': sum(Probs[s] * SP[s].ObjVal for s in SP.keys()),
-              'Load Lost%': LoadLost / TotalLoad,
-              'Load Served%': LoadServed / TotalLoad,
-              'Load Transferred%': LoadTrans / TotalLoad,
-              'Grid Load%': GridLoad / TotalLoad,
+              'Avg Recourse': sum(Probs[scen] * SP[scen].ObjVal for scen in SP.keys()),
+              'Load Lost%': sum(Probs[scen] * LLOList[scen]/LOList[scen] for scen in SP.keys()),
+              'Load Served%': sum(Probs[scen] * LSOList[scen]/LOList[scen] for scen in SP.keys()),
+              'Load Transferred%': sum(Probs[scen] * LTOList[scen]/LOList[scen] for scen in SP.keys()),
+              'Grid Load%': GridImportPerc,
               'Grid Exported': GridExport,
               'Grid Imported': GridImport,
               'Bill Before': Bill1,
