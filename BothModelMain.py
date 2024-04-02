@@ -6,6 +6,7 @@ import gurobipy as gp
 from gurobipy import quicksum, GRB
 import tqdm
 import warnings
+warnings.filterwarnings("ignore")
 
 env1 = gp.Env()
 env1.setParam('OutputFlag', 0)
@@ -343,58 +344,10 @@ if __name__ == "__main__":
     winter_peak = np.concatenate(([24 * i + 6 + j for i in range(6) for j in range(5)],
                                   [24 * i + 18 + j for i in range(6) for j in range(5)]))
 
-    # Each week in winter from hour 6 am to 10 am and 6 pm to 10 pm transfer is prohibited.
-
     DontTrans = {1: winter_peak, 2: winter_peak, 3: winter_peak,
                  4: [], 5: [],
                  6: summer_peak, 7: summer_peak, 8: summer_peak, 9: summer_peak,
                  10: [], 11: [], 12: []}
-
-    # Sensitivity Parameters
-    InvImportance = 1
-    VoLL_sensitivity = 1
-    ReInvsYear = 10
-    Operational_Rate = 0.01
-    Labor_Factor = 0.15
-
-    # Global parameters
-    Budget1 = 10000000
-    Budget2 = Budget1 / 2
-    Years = 20
-    Interest_Rate = 0.02
-    PA_Factor1 = ((1 + Interest_Rate) ** Years - 1) / (Interest_Rate * (1 + Interest_Rate) ** Years)
-    PA_Factor2 = ((1 + Interest_Rate) ** (Years - ReInvsYear) - 1) / (
-            Interest_Rate * (1 + Interest_Rate) ** (Years - ReInvsYear))
-    PF_Factor = 1 / (1 + Interest_Rate) ** ReInvsYear
-    C = {1: (1 + Labor_Factor) * 300, 2: (1 + Labor_Factor) * 2780,
-         3: (1 + Labor_Factor) * 400}  # order is: [ES, PV, DG]
-    CO1 = {i: C[i] * (1 + Operational_Rate * PA_Factor1) for i in (1, 2, 3)}
-    CO2 = {i: C[i] * (1 + Operational_Rate * PA_Factor2) for i in (1, 2, 3)}
-    F = {j: LocationPrice[com][j] for j in LocationPrice[com]}
-
-    UB = UB_dict[com]  # Upper bound of devices capacity (location, device)
-
-    # Efficiencies and performances
-    ES_gamma = 0.85
-    DG_gamma = 0.95  # %
-    DG_consumption = 0.4  # gal/kW
-    FuelPrice = 3.61  # $/gal
-    DGEffic = DG_consumption * FuelPrice  # Fuel cost of DG: $/kWh
-    ES_d = 0.02
-
-    # Electricity Prices
-    zeta = 0.8  # The parameter specifying what percentage of electricity price be determined as price to sell power to households
-    GridPlus = GridPlus_dict[com]  # $/kWh (importing price of power from the grid)
-    GridMinus = GridMinus_dict[com]  # exporting price of power back to grid
-    LoadPrice = zeta * GridPlus
-    PVCurPrice = GridMinus
-    DGCurPrice = GridMinus + DGEffic
-
-
-
-    SOC_UB, SOC_LB = 0.9, 0.1
-    eta_i = 0.9
-    GenPar = (365 / 7) / MCount
 
     X_ld = [(l, d) for l in RNGLoc for d in RNGDvc]
     X_il = [(i, l) for i in RNGSta for l in RNGLoc]
@@ -412,10 +365,51 @@ if __name__ == "__main__":
     eta_M = -100000000
     Xkeys = range(len(X_ld) + LCount)
 
-    MasterProb()
-    for trs in [0.95]:
-        print(trs)
-        TransMax = trs
+
+
+    for sns in [1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14, 16, 17, 18, 19, 20]:
+        print(sns)
+        # Sensitivity Parameters
+        InvImportance = 1
+        VoLL_sensitivity = 1
+        ReInvsYear = sns
+        TransMax = 0.25
+        Operational_Rate = 0.01
+        Labor_Factor = 0.15
+
+        # Global parameters
+        Budget1 = 10000000
+        Budget2 = Budget1 / 2
+        Years = 20
+        Interest_Rate = 0.02
+        PA_Factor1 = ((1 + Interest_Rate) ** Years - 1) / (Interest_Rate * (1 + Interest_Rate) ** Years)
+        PA_Factor2 = ((1 + Interest_Rate) ** (Years - ReInvsYear) - 1) / (
+                Interest_Rate * (1 + Interest_Rate) ** (Years - ReInvsYear))
+        PF_Factor = 1 / (1 + Interest_Rate) ** ReInvsYear
+        C = {1: (1 + Labor_Factor) * 300, 2: (1 + Labor_Factor) * 2780,
+             3: (1 + Labor_Factor) * 400}  # order is: [ES, PV, DG]
+        CO1 = {i: C[i] * (1 + Operational_Rate * PA_Factor1) for i in (1, 2, 3)}
+        CO2 = {i: C[i] * (1 + Operational_Rate * PA_Factor2) for i in (1, 2, 3)}
+        F = {j: LocationPrice[com][j] for j in LocationPrice[com]}
+
+        UB = UB_dict[com]  # Upper bound of devices capacity (location, device)
+
+        # Efficiencies and performances
+        ES_gamma = 0.85
+        DG_gamma = 0.95  # %
+        DG_consumption = 0.4  # gal/kW
+        FuelPrice = 3.61  # $/gal
+        DGEffic = DG_consumption * FuelPrice  # Fuel cost of DG: $/kWh
+        ES_d = 0.02
+
+        # Electricity Prices
+        zeta = 0.8  # The parameter specifying what percentage of electricity price be determined as price to sell power to households
+        GridPlus = GridPlus_dict[com]  # $/kWh (importing price of power from the grid)
+        GridMinus = GridMinus_dict[com]  # exporting price of power back to grid
+        LoadPrice = zeta * GridPlus
+        PVCurPrice = GridMinus
+        DGCurPrice = GridMinus + DGEffic
+
         VoLL = VoLL_dict[com] * VoLL_sensitivity * GridPlus
         VoLL_hourly = {i: {} for i in RNGMonth}
         for g in RNGMonth:
@@ -425,8 +419,13 @@ if __name__ == "__main__":
                 else:
                     VoLL_hourly[g][tt] = (1 - TransMax) * VoLL
 
+        SOC_UB, SOC_LB = 0.9, 0.1
+        eta_i = 0.9
+        GenPar = (365 / 7) / MCount
+
         for scen in tqdm.tqdm(norm_probs.keys()):
             SubProb(scen)
+        MasterProb()
 
         # Open subproblems
         SP, TMatrices, rVectors = {}, {}, {}
