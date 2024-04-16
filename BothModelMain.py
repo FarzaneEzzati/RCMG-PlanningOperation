@@ -6,6 +6,7 @@ import gurobipy as gp
 from gurobipy import quicksum, GRB
 import tqdm
 import warnings
+
 warnings.filterwarnings("ignore")
 
 env1 = gp.Env()
@@ -218,7 +219,6 @@ def GetPIs(X_star):
     E = [sum(E[s][x] * Probs[s] for s in range(len(Probs))) for x in Xkeys]
     return E, e
 
-
 def BendersCut(model, where):
     if where == gp.GRB.Callback.MIPSOL:
         X = model.cbGetSolution(model._vars)
@@ -231,7 +231,7 @@ def BendersCut(model, where):
 if __name__ == "__main__":
 
     # Specify the community the model is being built 1: sunnyside, 2:Dove Springs, 3:Rogers Washington
-    com = 1
+    com = 3
     com_folder = {1: 'HarrisCounty-SS',
                   2: 'TravisCounty-DS',
                   3: 'TravisCounty-RW'}
@@ -365,17 +365,17 @@ if __name__ == "__main__":
     eta_M = -100000000
     Xkeys = range(len(X_ld) + LCount)
 
-
-
-    for sns in [1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14, 16, 17, 18, 19, 20]:
+    for sns in [0.6, 0.8, 1.2, 1.4]:
         print(sns)
         # Sensitivity Parameters
         InvImportance = 1
         VoLL_sensitivity = 1
-        ReInvsYear = sns
+        ReInvsYear = 10
         TransMax = 0.25
         Operational_Rate = 0.01
         Labor_Factor = 0.15
+        zeta = 0.8
+        PV_ = sns
 
         # Global parameters
         Budget1 = 10000000
@@ -386,7 +386,7 @@ if __name__ == "__main__":
         PA_Factor2 = ((1 + Interest_Rate) ** (Years - ReInvsYear) - 1) / (
                 Interest_Rate * (1 + Interest_Rate) ** (Years - ReInvsYear))
         PF_Factor = 1 / (1 + Interest_Rate) ** ReInvsYear
-        C = {1: (1 + Labor_Factor) * 300, 2: (1 + Labor_Factor) * 2780,
+        C = {1: (1 + Labor_Factor) * 300, 2: (1 + Labor_Factor) * PV_ * 2780,
              3: (1 + Labor_Factor) * 400}  # order is: [ES, PV, DG]
         CO1 = {i: C[i] * (1 + Operational_Rate * PA_Factor1) for i in (1, 2, 3)}
         CO2 = {i: C[i] * (1 + Operational_Rate * PA_Factor2) for i in (1, 2, 3)}
@@ -403,7 +403,7 @@ if __name__ == "__main__":
         ES_d = 0.02
 
         # Electricity Prices
-        zeta = 0.8  # The parameter specifying what percentage of electricity price be determined as price to sell power to households
+
         GridPlus = GridPlus_dict[com]  # $/kWh (importing price of power from the grid)
         GridMinus = GridMinus_dict[com]  # exporting price of power back to grid
         LoadPrice = zeta * GridPlus
@@ -430,14 +430,13 @@ if __name__ == "__main__":
         # Open subproblems
         SP, TMatrices, rVectors = {}, {}, {}
         print('Load Subproblems')
-        for scen in tqdm.tqdm(range(len(Probs))):
+        for scen in range(len(Probs)):
             SP[scen] = gp.read(f'Models/Sub{scen}.mps', env=env2)
             with open(f'Models/Sub{scen}-Tr.pkl', 'rb') as handle:
                 TMatrix, rVector = pickle.load(handle)
             handle.close()
             TMatrices[scen] = TMatrix
             rVectors[scen] = rVector
-
 
         # Solve master problem by callback
         master = gp.read('Models/Master.mps', env=env2)
@@ -571,4 +570,7 @@ if __name__ == "__main__":
                   'PV2': sum(X2[ld] for ld in X_ld if ld[1] == 2),
                   'DG2': sum(X2[ld] for ld in X_ld if ld[1] == 3)
                   }
-        pd.DataFrame(report, index=[0]).to_csv(f'Report-{TransMax}.csv')
+        pd.DataFrame(report, index=[0]).to_csv(f'Report-{sns}.csv')
+        for scen in range(30):
+            SP[scen].dispose()
+        master.dispose()
