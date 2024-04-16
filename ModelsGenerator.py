@@ -15,7 +15,7 @@ env.setParam('OutputFlag', 0)
 
 
 # Specify the community the model is being built 1: sunnyside, 2:Dove Springs, 3:Rogers Washington
-com = 1
+com = 2
 com_folder = {1: 'HarrisCounty-SS',
               2: 'TravisCounty-DS',
               3: 'TravisCounty-RW'}
@@ -146,7 +146,7 @@ DontTrans = {1: winter_peak, 2: winter_peak, 3: winter_peak,
 # Sensitivity Parameters
 InvImportance = 1
 VoLL_sensitivity = 1
-TransMax = 0.45
+TransMax = 0.25
 ReInvsYear = 10
 Operational_Rate = 0.01
 Labor_Factor = 0.15
@@ -401,4 +401,7 @@ if __name__ == '__main__':
     MasterProb()
     for scen in tqdm.tqdm(norm_probs.keys()):
         SubProb(scen)
+
+
+
 
