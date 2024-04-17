@@ -145,7 +145,7 @@ DontTrans = {1: winter_peak, 2: winter_peak, 3: winter_peak,
 
 # Sensitivity Parameters
 InvImportance = 1
-VoLL_sensitivity = 1
+VoLL_sensitivity = 5
 TransMax = 0.25
 ReInvsYear = 10
 Operational_Rate = 0.01
@@ -329,6 +329,10 @@ def SubProb(scen):
                                        for l in RNGLoc), name='DG')
 
                 Total_Transfer_from_t = quicksum(Y_LT[(i, t, to, g)] for to in range(t, T + 1))
+
+                sub.addConstr(quicksum(Y_LT[(i, to, t, g)] for to in range(1, t+1)) == 0, name='NoBackTrans')
+
+
                 # Load decomposition
                 sub.addConstr(eta_i * (Y_ESL[(i, t, g)] + Y_DGL[(i, t, g)] + Y_PVL[(i, t, g)]) + Y_GridL[(i, t, g)] +
                               Y_LL[(i, t, g)] + Total_Transfer_from_t == L[(i, t, g)],
@@ -346,13 +350,10 @@ def SubProb(scen):
                 sub.addConstr(Y_E[(i, t, g)] - quicksum(Y_LT[(i, to, t, g)] for to in range(1, t)) >= 0,
                               name='ES Load limit')
 
-                # Prohibited transfer to self
-                sub.addConstr(Y_LT[(i, t, t, g)] == 0, name='TransIt')
-
-                # ES charging/discharging constraints
+                '''# ES charging/discharging constraints
                 sub.addConstr(Y_ESL[(i, t, g)] + Y_ESGrid[(i, t, g)] +
                               Y_PVES[(i, t, g)] + Y_DGES[(i, t, g)] +
-                              Y_GridES[(i, t, g)] <= Total_ES, name='BothChDisCh')
+                              Y_GridES[(i, t, g)] <= Total_ES, name='BothChDisCh')'''
 
             # Prohibited transaction with the grid during outage
             if Out_Time[g] != 0:
@@ -401,6 +402,7 @@ if __name__ == '__main__':
     MasterProb()
     for scen in tqdm.tqdm(norm_probs.keys()):
         SubProb(scen)
+
 
 
 

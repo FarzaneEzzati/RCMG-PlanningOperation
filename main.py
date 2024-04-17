@@ -108,37 +108,40 @@ if __name__ == '__main__':
                     h = os
 
         # Save for scenario low
-        l_ESL = [SP[l].getVarByName(f'Y_ESL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        l_PVES = [SP[l].getVarByName(f'Y_PVES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        l_DGES = [SP[l].getVarByName(f'Y_DGES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        l_DGL = [SP[l].getVarByName(f'Y_DGL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        l_PVL = [SP[l].getVarByName(f'Y_PVL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        l_LL = [SP[l].getVarByName(f'Y_LL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        l_LT = [SP[l].getVarByName(f'Y_LT[{ittg[0]},{ittg[1]},{ittg[2]},{ittg[3]}]').x for ittg in Y_ittg]
+        l_ESL = {itg: SP[l].getVarByName(f'Y_ESL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        l_PVES = {itg: SP[l].getVarByName(f'Y_PVES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        l_DGES = {itg: SP[l].getVarByName(f'Y_DGES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        l_DGL = {itg: SP[l].getVarByName(f'Y_DGL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        l_PVL = {itg: SP[l].getVarByName(f'Y_PVL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        l_LL = {itg: SP[l].getVarByName(f'Y_LL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        l_LT = {ittg: SP[l].getVarByName(f'Y_LT[{ittg[0]},{ittg[1]},{ittg[2]},{ittg[3]}]').x for ittg in Y_ittg}
+        l_E = {itg: SP[l].getVarByName(f'Y_E[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
         with open(f'Visualizations/{com_folder[com]} Low_Outage.pkl', 'wb') as handle:
-            pickle.dump([l_ESL, l_PVL, l_PVES, l_DGES, l_DGL, l_LT, l_LL], handle)
+            pickle.dump([l_ESL, l_PVL, l_PVES, l_DGES, l_DGL, l_LT, l_LL, l_E], handle)
         handle.close()
 
-        m_ESL = [SP[m].getVarByName(f'Y_ESL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        m_PVES = [SP[m].getVarByName(f'Y_PVES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        m_DGES = [SP[m].getVarByName(f'Y_DGES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        m_DGL = [SP[m].getVarByName(f'Y_DGL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        m_PVL = [SP[m].getVarByName(f'Y_PVL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        m_LL = [SP[m].getVarByName(f'Y_LL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        m_LT = [SP[m].getVarByName(f'Y_LT[{ittg[0]},{ittg[1]},{ittg[2]},{ittg[3]}]').x for ittg in Y_ittg]
+        m_ESL = {itg: SP[m].getVarByName(f'Y_ESL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        m_PVES = {itg: SP[m].getVarByName(f'Y_PVES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        m_DGES = {itg: SP[m].getVarByName(f'Y_DGES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        m_DGL = {itg: SP[m].getVarByName(f'Y_DGL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        m_PVL = {itg: SP[m].getVarByName(f'Y_PVL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        m_LL = {itg: SP[m].getVarByName(f'Y_LL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        m_LT = {ittg: SP[m].getVarByName(f'Y_LT[{ittg[0]},{ittg[1]},{ittg[2]},{ittg[3]}]').x for ittg in Y_ittg}
+        m_E = {itg: SP[m].getVarByName(f'Y_E[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
         with open(f'Visualizations/{com_folder[com]} Medium_Outage.pkl', 'wb') as handle:
-            pickle.dump([m_ESL, m_PVL, m_PVES, m_DGES, m_DGL, m_LT, m_LL], handle)
+            pickle.dump([m_ESL, m_PVL, m_PVES, m_DGES, m_DGL, m_LT, m_LL, m_E], handle)
         handle.close()
 
-        h_ESL = [SP[h].getVarByName(f'Y_ESL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        h_PVES = [SP[h].getVarByName(f'Y_PVES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        h_DGES = [SP[h].getVarByName(f'Y_DGES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        h_DGL = [SP[h].getVarByName(f'Y_DGL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        h_PVL = [SP[h].getVarByName(f'Y_PVL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        h_LL = [SP[h].getVarByName(f'Y_LL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg]
-        h_LT = [SP[h].getVarByName(f'Y_LT[{ittg[0]},{ittg[1]},{ittg[2]},{ittg[3]}]').x for ittg in Y_ittg]
+        h_ESL = {itg: SP[h].getVarByName(f'Y_ESL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        h_PVES = {itg: SP[h].getVarByName(f'Y_PVES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        h_DGES = {itg: SP[h].getVarByName(f'Y_DGES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        h_DGL = {itg: SP[h].getVarByName(f'Y_DGL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        h_PVL = {itg: SP[h].getVarByName(f'Y_PVL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        h_LL = {itg: SP[h].getVarByName(f'Y_LL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        h_E = {itg: SP[h].getVarByName(f'Y_E[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        h_LT = {ittg: SP[h].getVarByName(f'Y_LT[{ittg[0]},{ittg[1]},{ittg[2]},{ittg[3]}]').x for ittg in Y_ittg}
         with open(f'Visualizations/{com_folder[com]} High_Outage.pkl', 'wb') as handle:
-            pickle.dump([h_ESL, h_PVL, h_PVES, h_DGES, h_DGL, h_LT, h_LL], handle)
+            pickle.dump([h_ESL, h_PVL, h_PVES, h_DGES, h_DGL, h_LT, h_LL, h_E], handle)
         handle.close()
 
 
