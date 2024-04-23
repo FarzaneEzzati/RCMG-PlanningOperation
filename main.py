@@ -3,12 +3,15 @@ import gurobipy as gp
 import pandas as pd
 from tqdm import tqdm
 import copy
+from gurobipy import GRB
 from ModelsGenerator import Xkeys, X_ld, C, Load_scens, AG_scens, Outage_scens, DontTrans, Y_itg, Y_ittg, \
     RNGTime, LoadPrice, GridPlus, RNGSta, RNGMonth, ReInvsYear, eta_i, com, com_folder
 
 env = gp.Env()
 env2 = gp.Env()
 env2.setParam('OutputFlag', 0)
+env2.setParam('DualReductions', 0)
+env2.setParam('InfUnbdInfo', 1)
 
 # Open data required
 with open('Data/ScenarioProbabilities.pkl', 'rb') as handle:
@@ -116,8 +119,10 @@ if __name__ == '__main__':
         l_LL = {itg: SP[l].getVarByName(f'Y_LL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
         l_LT = {ittg: SP[l].getVarByName(f'Y_LT[{ittg[0]},{ittg[1]},{ittg[2]},{ittg[3]}]').x for ittg in Y_ittg}
         l_E = {itg: SP[l].getVarByName(f'Y_E[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        l_GL = {itg: SP[l].getVarByName(f'Y_GridL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        l_GES = {itg: SP[l].getVarByName(f'Y_GridES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
         with open(f'Visualizations/{com_folder[com]} Low_Outage.pkl', 'wb') as handle:
-            pickle.dump([l_ESL, l_PVL, l_PVES, l_DGES, l_DGL, l_LT, l_LL, l_E], handle)
+            pickle.dump([l_ESL, l_PVL, l_PVES, l_DGES, l_DGL, l_LT, l_LL, l_E, l_GL, l_GES], handle)
         handle.close()
 
         m_ESL = {itg: SP[m].getVarByName(f'Y_ESL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
@@ -128,8 +133,10 @@ if __name__ == '__main__':
         m_LL = {itg: SP[m].getVarByName(f'Y_LL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
         m_LT = {ittg: SP[m].getVarByName(f'Y_LT[{ittg[0]},{ittg[1]},{ittg[2]},{ittg[3]}]').x for ittg in Y_ittg}
         m_E = {itg: SP[m].getVarByName(f'Y_E[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        m_GL = {itg: SP[m].getVarByName(f'Y_GridL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        m_GES = {itg: SP[m].getVarByName(f'Y_GridES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
         with open(f'Visualizations/{com_folder[com]} Medium_Outage.pkl', 'wb') as handle:
-            pickle.dump([m_ESL, m_PVL, m_PVES, m_DGES, m_DGL, m_LT, m_LL, m_E], handle)
+            pickle.dump([m_ESL, m_PVL, m_PVES, m_DGES, m_DGL, m_LT, m_LL, m_E, m_GL, m_GES], handle)
         handle.close()
 
         h_ESL = {itg: SP[h].getVarByName(f'Y_ESL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
@@ -140,12 +147,14 @@ if __name__ == '__main__':
         h_LL = {itg: SP[h].getVarByName(f'Y_LL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
         h_E = {itg: SP[h].getVarByName(f'Y_E[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
         h_LT = {ittg: SP[h].getVarByName(f'Y_LT[{ittg[0]},{ittg[1]},{ittg[2]},{ittg[3]}]').x for ittg in Y_ittg}
+        h_GL = {itg: SP[h].getVarByName(f'Y_GridL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
+        h_GES = {itg: SP[h].getVarByName(f'Y_GridES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
         with open(f'Visualizations/{com_folder[com]} High_Outage.pkl', 'wb') as handle:
-            pickle.dump([h_ESL, h_PVL, h_PVES, h_DGES, h_DGL, h_LT, h_LL, h_E], handle)
+            pickle.dump([h_ESL, h_PVL, h_PVES, h_DGES, h_DGL, h_LT, h_LL, h_E, h_GL, h_GES], handle)
         handle.close()
 
 
-    Report = False
+    Report = True
     if Report:
         print('Reporting started')
         #  Resilience Metrics
@@ -179,9 +188,9 @@ if __name__ == '__main__':
                     AllLoadFails += Fail
                     AllOutages += Outage_scens[scen]
 
-                    for oh in outage_hours:
+                    for oh in outage_hours[:-1]:
                         AllLoadTrans += sum(SP[scen].getVarByName(f'Y_LT[{i},{oh},{tt},{g}]').x
-                                            for tt in range(oh, outage_hours[-1]+1))
+                                            for tt in range(oh+1, outage_hours[-1]+1))
             RobList.append(AllLoadFails/AllOutages)
 
             LOList.append(sum(((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear) * Load_scens[scen][g][t - 1]

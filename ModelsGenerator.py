@@ -48,9 +48,13 @@ GridMinus_dict = {1: 0.12,
                   2: 0.097,
                   3: 0.097}
 
-VoLL_dict = {1: 1.59,
-             2: 2,
-             3: 1}
+VoLL_dict = {1: 0.2764,
+             2: 0.2567,
+             3: 0.5157}
+
+Vuln_dict = {1: 0.59,
+             2: 1,
+             3: 0}
 
 
 S = 30
@@ -93,10 +97,12 @@ if True:
             week_long = pd.concat([dw_single, dw_single, dw_single, dw_single, dw_single, de_single, de_single])
             week_long_hourly = []
 
-            for j in range(1, 169):
-                loc = int(j / 4)
-                summ = sum(week_long[loc + k] for k in range(4))
+            j = 0
+            while j <= 668:
+                summ = sum(week_long[j + k] for k in range(4))
                 week_long_hourly.append(summ)
+                j += 4
+
             Load_scens[i][month_counter] = week_long_hourly
             Load_scens[i][month_counter + 1] = week_long_hourly
         month_counter += 2
@@ -144,7 +150,7 @@ DontTrans = {1: winter_peak, 2: winter_peak, 3: winter_peak,
              10: [], 11: [], 12: []}
 
 # Sensitivity Parameters
-InvImportance = 1
+InvImportance = 0.25 + 0.55*(1 - Vuln_dict[com])
 VoLL_sensitivity = 5
 TransMax = 0.25
 ReInvsYear = 10
@@ -164,8 +170,6 @@ CO1 = {i: C[i] * (1 + Operational_Rate * PA_Factor1) for i in (1, 2, 3)}
 CO2 = {i: C[i] * (1 + Operational_Rate * PA_Factor2) for i in (1, 2, 3)}
 F = {j: LocationPrice[com][j] for j in LocationPrice[com]}
 
-
-
 UB = UB_dict[com]  # Upper bound of devices capacity (location, device)
 
 # Efficiencies and performances
@@ -184,14 +188,7 @@ LoadPrice = zeta * GridPlus
 PVCurPrice = GridMinus
 DGCurPrice = GridMinus + DGEffic
 
-VoLL = VoLL_dict[com] * VoLL_sensitivity * GridPlus
-VoLL_hourly = {i: {} for i in RNGMonth}
-for g in RNGMonth:
-    for tt in RNGTime:
-        if tt in DontTrans[g]:
-            VoLL_hourly[g][tt] = VoLL
-        else:
-            VoLL_hourly[g][tt] = (1 - TransMax) * VoLL
+VoLL = (1 + 1 - VoLL_dict[com]) * VoLL_sensitivity * GridPlus
 
 SOC_UB, SOC_LB = 0.9, 0.1
 eta_i = 0.9
@@ -202,7 +199,7 @@ X_il = [(i, l) for i in RNGSta for l in RNGLoc]
 Y_itg = [(i, t, g)
          for i in RNGSta for t in RNGTime for g in RNGMonth]
 Y_ittg = [(i, t, to, g)
-          for i in RNGSta for t in RNGTime for to in RNGTime for g in RNGMonth]
+          for i in RNGSta for t in RNGTime for to in range(t+1, T+1) for g in RNGMonth]
 
 Y_itgs = [(i, t, g, s)
           for i in RNGSta for t in RNGTime for g in RNGMonth for s in RNGScen]
@@ -281,7 +278,16 @@ def SubProb(scen):
             else:
                 for g in RNGMonth:
                     Out_Time[g] = [OutageStart + j for j in range(int(Outage_scens[scen]))]
-
+        VoLL_hourly = {i: {} for i in RNGMonth}
+        for g in RNGMonth:
+            for tt in RNGTime:
+                if tt in Out_Time[g]:
+                    if tt in DontTrans[g]:
+                        VoLL_hourly[g][tt] = VoLL
+                    else:
+                        VoLL_hourly[g][tt] = 0.7 * VoLL
+                else:
+                    VoLL_hourly[g][tt] = 0
     '''Reinvestment Constraints'''
     if True:
         # Investment constraint
@@ -307,66 +313,81 @@ def SubProb(scen):
         for g in RNGMonth:
             Total_ES = quicksum((1 - (i - 1) * ES_d) ** ReInvsYear * X1[(l, 1)] +
                                 (i - 1) * X2[(l, 1)] for l in RNGLoc)
-            # ES levels
-            sub.addConstr(Y_E[(i, 1, g)] == SOC_LB * Total_ES, name='t1')
+            # First ES levels
+            sub.addConstr(Y_E[(i, 1, g)] == SOC_UB * Total_ES, name='t1')
 
             for t in RNGTime:
+
                 # Limits on energy level in ES
                 sub.addConstr(Y_E[(i, t, g)] >= SOC_LB * Total_ES, name='E_LB')
 
                 sub.addConstr(Y_E[(i, t, g)] <= SOC_UB * Total_ES, name='E_UB')
 
+                # Limits on Charge/Discharge
+                sub.addConstr(Y_ESL[(i, t, g)] + Y_ESGrid[(i, t, g)] <= Total_ES, name='ES_Discharge')
+
+                sub.addConstr(Y_PVES[(i, t, g)] + Y_DGES[(i, t, g)] + Y_GridES[(i, t, g)] <= Total_ES, name='ES_Charge')
+
                 # PV power decomposition
-                sub.addConstr(eta_i * (Y_PVL[(i, t, g)] + Y_PVGrid[(i, t, g)]) +
+                sub.addConstr((Y_PVL[(i, t, g)] + Y_PVGrid[(i, t, g)])/eta_i +
                               Y_PVCur[(i, t, g)] + Y_PVES[(i, t, g)] ==
                               PV[(t, g)] * quicksum(X1[(l, 2)] + (i - 1) * X2[(l, 2)]
                                                     for l in RNGLoc), name='PV')
 
                 # DG power decomposition
-                sub.addConstr(eta_i * (Y_DGL[(i, t, g)] + Y_DGGrid[(i, t, g)]) +
+                sub.addConstr((Y_DGL[(i, t, g)] + Y_DGGrid[(i, t, g)])/eta_i +
                               Y_DGES[(i, t, g)] + Y_DGCur[(i, t, g)] ==
                               DG_gamma * quicksum(X1[(l, 3)] + (i - 1) * X2[(l, 3)]
                                        for l in RNGLoc), name='DG')
 
-                Total_Transfer_from_t = quicksum(Y_LT[(i, t, to, g)] for to in range(t, T + 1))
-
-                sub.addConstr(quicksum(Y_LT[(i, to, t, g)] for to in range(1, t+1)) == 0, name='NoBackTrans')
-
+                # Calculate total transfer from t
+                Total_Transfer_from_t = quicksum(Y_LT[(i, t, to, g)] for to in range(t+1, T + 1))
 
                 # Load decomposition
-                sub.addConstr(eta_i * (Y_ESL[(i, t, g)] + Y_DGL[(i, t, g)] + Y_PVL[(i, t, g)]) + Y_GridL[(i, t, g)] +
-                              Y_LL[(i, t, g)] + Total_Transfer_from_t == L[(i, t, g)],
+                sub.addConstr(Y_ESL[(i, t, g)] + Y_DGL[(i, t, g)] + Y_PVL[(i, t, g)] + Y_GridL[(i, t, g)] +
+                              Y_LL[(i, t, g)] == L[(i, t, g)],
                               name='LoadD')
+
+                # if not outage, lot must be zero
+                if t not in Out_Time[g]:
+                    sub.addConstr(Y_LL[(i, t, g)] == 0, name='NoOutNoLoss')
+                    sub.addConstr(Y_GridL[(i, t, g)] >= 0.5*L[(i, t, g)], name='NoOutUseGrid')
 
                 if t in DontTrans[g]:
                     # Don't allow transfer
                     sub.addConstr(Total_Transfer_from_t == 0, name='NoTrans')
                 else:
                     # Max load transfer
-                    sub.addConstr(TransMax * L[(i, t, g)] - Total_Transfer_from_t >= 0,
+                    sub.addConstr(Total_Transfer_from_t <= TransMax * L[(i, t, g)],
                                   name='MaxLoadTrans')
 
-                # Load transfer and E level
-                sub.addConstr(Y_E[(i, t, g)] - quicksum(Y_LT[(i, to, t, g)] for to in range(1, t)) >= 0,
-                              name='ES Load limit')
+                sub.addConstr(Total_Transfer_from_t <= (Y_E[(i, t, g)] - SOC_LB*Total_ES),
+                              name='TransIfPoss')
 
-                '''# ES charging/discharging constraints
-                sub.addConstr(Y_ESL[(i, t, g)] + Y_ESGrid[(i, t, g)] +
-                              Y_PVES[(i, t, g)] + Y_DGES[(i, t, g)] +
-                              Y_GridES[(i, t, g)] <= Total_ES, name='BothChDisCh')'''
+                # Load transfer and E level
+                sub.addConstr(Y_ESL[(i, t, g)] / (eta_i * ES_gamma) + Total_Transfer_from_t
+                              <= Y_E[(i, t, g)],
+                              name='ESOutputTrans')
+
+                if t>1:
+                    # Total transfer to a time t must align with ES level
+                    sub.addConstr(sum(Y_LT[(i, to, t, g)] for to in range(1, t)) <= Y_E[(i, t, g)],
+                                  name='ESInputTrans')
 
             # Prohibited transaction with the grid during outage
-            if Out_Time[g] != 0:
-                for ot in Out_Time[g]:
-                    sub.addConstr(Y_GridL[(i, ot, g)] + Y_GridES[(i, ot, g)] +
-                                  Y_PVGrid[(i, ot, g)] + Y_ESGrid[(i, ot, g)] +
-                                  Y_DGGrid[(i, ot, g)] == 0, name='GridTransaction')
-            for t in range(1, T - 1):
-                # Balance of power flow
+            for ot in Out_Time[g]:
+                sub.addConstr(Y_GridL[(i, ot, g)] + Y_GridES[(i, ot, g)] +
+                              Y_PVGrid[(i, ot, g)] + Y_ESGrid[(i, ot, g)] +
+                              Y_DGGrid[(i, ot, g)] == 0, name='GridTransaction')
+
+            # Balance of power flow
+            for t in range(1, T):
                 sub.addConstr(Y_E[(i, t + 1, g)] ==
                               Y_E[(i, t, g)] +
                               ES_gamma * (Y_PVES[(i, t, g)] + Y_DGES[(i, t, g)] + eta_i * Y_GridES[(i, t, g)]) -
-                              (eta_i / ES_gamma) * (Y_ESL[(i, t, g)] + Y_ESGrid[(i, t, g)]), name='Balance')
+                              (Y_ESL[(i, t, g)] + Y_ESGrid[(i, t, g)]) / (eta_i * ES_gamma), name='Balance')
+
+
     '''Costs'''
     if True:
         Capital2 = quicksum(PA_Factor2 * F[l] * (U2[l] - U1[l]) for l in RNGLoc) + \
