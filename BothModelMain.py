@@ -251,18 +251,17 @@ def BendersCut(model, where):
 if __name__ == "__main__":
 
     # Specify the community the model is being built 1: sunnyside, 2:Dove Springs, 3:Rogers Washington
-    com = 3
+    com = 2
     com_folder = {1: 'HarrisCounty-SS',
                   2: 'TravisCounty-DS',
                   3: 'TravisCounty-RW'}
 
     # Community-dependent data
-    b = 1
-    UB_dict = {1: {(1, 1): b * 300, (1, 2): b * 114, (1, 3): b * 100,
-                   (2, 1): b * 300, (2, 2): b * 396, (2, 3): b * 100,
-                   (3, 1): b * 300, (3, 2): b * 141, (3, 3): b * 100,
-                   (4, 1): b * 300, (4, 2): b * 133, (4, 3): b * 100,
-                   (5, 1): b * 300, (5, 2): b * 246, (5, 3): b * 100},
+    UB_dict = {1: {(1, 1): 300, (1, 2): 114, (1, 3): 100,
+                   (2, 1): 300, (2, 2): 396, (2, 3): 100,
+                   (3, 1): 300, (3, 2): 141, (3, 3): 100,
+                   (4, 1): 300, (4, 2): 133, (4, 3): 100,
+                   (5, 1): 300, (5, 2): 246, (5, 3): 100},
 
                2: {(1, 1): 600, (1, 2): 318, (1, 3): 100,
                    (2, 1): 600, (2, 2): 299, (2, 3): 100,
@@ -640,7 +639,7 @@ if __name__ == "__main__":
 
             Endurance = sum([Probs[s] * EndurList[s] for s in SP.keys()])
             Sustain = sum([Probs[s] * SusList[s] for s in SP.keys()])
-            LoadAssur = eta_i * sum([Probs[s] * LSOList[s] / LOList[s] for s in SP.keys()])
+            DemAssur = eta_i * sum([Probs[s] * LSOList[s] / LOList[s] for s in SP.keys()])
             PeakAssur = eta_i * sum([Probs[s] * LSnTList[s] / LnTList[s] for s in SP.keys()])
 
             Bill1 = sum([Probs[s] * LnOList[s] * GridPlus for s in SP.keys()])
@@ -666,7 +665,7 @@ if __name__ == "__main__":
                       'Bill After': Bill2,
                       'Impact Endurance': Endurance,
                       'Sustained Access': Sustain,
-                      'Load Assurance': LoadAssur,
+                      'Demand Assurance': DemAssur,
                       'Peak Assurance': PeakAssur,
                       'ES1': sum(X1[ld] for ld in X_ld if ld[1] == 1),
                       'PV1': sum(X1[ld] for ld in X_ld if ld[1] == 2),
