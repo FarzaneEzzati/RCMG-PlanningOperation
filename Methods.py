@@ -168,7 +168,6 @@ def read_data(mg_id):
         OT_scen, LD_scen, LG_scen, PV_scen, \
         combination_scen, combination_prob
 
-
 def solve_subproblems(sub_modles, optimal_x_u, x_keys, probs, num_locations):
     ### Get sub vars
     x_u_scenarios = []
