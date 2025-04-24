@@ -168,34 +168,34 @@ def read_data(mg_id):
         OT_scen, LD_scen, LG_scen, PV_scen, \
         combination_scen, combination_prob
 
-def solve_subproblems(sub_modles, optimal_x_u, x_keys, probs, num_locations):
+def solve_subproblems(sub_modles, optimal_x, x_keys, probs, num_locations):
     ### Get sub vars
-    x_u_scenarios = []
+    x_scenarios = []
     for sub_model in sub_models:
         sub_vars = sub_model.getVars()
         for x_key in x_keys:
-            sub_vars[x_key].UB = optimal_x_u[x_key]
-            sub_vars[x_key].LB = optimal_x_u[x_key]
+            sub_vars[x_key].UB = optimal_x[x_key]
+            sub_vars[x_key].LB = optimal_x[x_key]
         sub_model.update()
         sub_model.optimize()
         sub_optimal_vars = sub_model.getVars()[:len(x_keys)]
-        x_u_scenarios.append([var.x for var in sub_optimal_vars])
+        x_scenarios.append([var.x for var in sub_optimal_vars])
     ### Get average
-    average_x_u = np.average(np.array(x_u_scenarios), axis=0, weights=probs)
+    average_x = np.average(np.array(x_scenarios), axis=0, weights=probs)
     ### Reshape
-    average_x = average_x_u[:num_locations].reshape((num_locations, 3))  # [num_l, 3]
-    average_u = average_x_u[num_locations:].reshape((num_locations, 1))  # [num_l, 1]
-    x_u_E = np.concatenate((average_x, average_u), axis=1)
+    average_x = average_x[:num_locations].reshape((num_locations, 3))  # [num_l, 3]
+    average_u = average_x[num_locations:].reshape((num_locations, 1))  # [num_l, 1]
+    x_E = np.concatenate((average_x, average_u), axis=1)
 
-    optimal_x = optimal_x_u[:num_locations].reshape((num_locations, 3))  # [num_l, 3]
-    optimal_u = optimal_x_u[num_locations:].reshape((num_locations, 1))  # [num_l, 1]
-    x_u_I = np.concatenate((optimal_x, optimal_u), axis=1)
+    optimal_x = optimal_x[:num_locations].reshape((num_locations, 3))  # [num_l, 3]
+    optimal_u = optimal_x[num_locations:].reshape((num_locations, 1))  # [num_l, 1]
+    x_I = np.concatenate((optimal_x, optimal_u), axis=1)
     ### Store
-    pd.DataFrame(x_u_I, index=False, columns=['ES', 'PV', 'DG', 'U']).to_csv(f'(MG{mg_id})X_I.csv')
-    pd.DataFrame(x_u_E, index=False, columns=['ES', 'PV', 'DG', 'U']).to_csv(f'(MG{mg_id})X_E.csv')
-    return x_u_I, x_u_E
+    pd.DataFrame(x_I, index=False, columns=['ES', 'PV', 'DG', 'U']).to_csv(f'(MG{mg_id})X_I.csv')
+    pd.DataFrame(x_E, index=False, columns=['ES', 'PV', 'DG', 'U']).to_csv(f'(MG{mg_id})X_E.csv')
+    return x_I, x_E
 
-def get_report(models, x_u_I, x_u_E):
+def get_report(models, x_I, x_E):
     with open('Data/Probabilities.pkl', 'rb') as handle:
         scenarios, probs, max_outage_scenario = pickle.load(handle)
     S = len(probs)
@@ -257,8 +257,8 @@ def get_report(models, x_u_I, x_u_E):
     # Expected recourse
     costs_avg = np.sum([models[s].ObjVal for s in range(S)])
     # First year investment
-    investment = np.dot(np.sum(x_u_I[:, :3], axis=0), C)
-    expansion = np.dot(np.sum(x_u_E[:, :3], axis=0), C)
+    investment = np.dot(np.sum(x_I[:, :3], axis=0), C)
+    expansion = np.dot(np.sum(x_E[:, :3], axis=0), C)
 
     #  Save reports
     report = {'Investment': investment,

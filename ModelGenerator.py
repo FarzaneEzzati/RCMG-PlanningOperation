@@ -110,7 +110,7 @@ def build_model(mg_id):
     ##### Save master in mps + save data in pickle
     master.update()
     master.write('Models/Master.mps')
-    X_I_keys = range(L * D + L)
+    X_I_keys = range(L * D)
     with open('Models/Master.pkl', 'wb') as f:
         pickle.dump([X_I_keys, L], f)
     ##### Free up memory
@@ -126,8 +126,6 @@ def build_model(mg_id):
         X_I = sub.addMVar((L, D), name=f'X_I')
         U_I = sub.addVars(L, ub=1, name='U_I')
         sub.update()
-        X_E = sub.addMVar((L, D), name=f'X_I')
-        U_E = sub.addVars(L, ub=1, name='U_E')
         Y_PVES = {i: sub.addMVar((G, T), name=f'Y_PVES[{i}]') for i in i_index}
         Y_DGES = {i: sub.addMVar((G, T), name=f'Y_DGES[{i}]') for i in i_index}
         Y_GridES = {i: sub.addMVar((G, T), name=f'Y_GridES[{i}]') for i in i_index}
@@ -155,14 +153,12 @@ def build_model(mg_id):
                 else:
                     Outage[g] = range(outage_start, outage_start + outage_duration)
         ###### Expansion Constraints
-        capital_cost_E = sum(F[l] * (U_E[l] - U_I[l]) for l in range(L)) + gp.quicksum(X_E[l, d] * C[d] for l, d in ld_index)
+        capital_cost_E = gp.quicksum(X_E[l, d] * C[d] for l, d in ld_index)
         operation_cost_E = gp.quicksum(X_E[l, d] * O[d] for l, d in ld_index)
-        sub.addConstr(capital_cost_E <= Budget_E, name='E_Investment')
+        sub.addConstr((1 - sv_subsidy_rate) * capital_cost_E <= Budget_E, name='Budget Limit')
+        master.addConstr(sv_subsidy_rate * capital_cost <= 0.5 * total_subsidy, name='Total Subsidy')
         ###### Capacity limit
         sub.addConstr(X_E + X_I <= device_ub, name='ES Location Limit')
-        sub.addConstrs((X_E[l, d] <= U_E[l] * device_ub[l, d] for l, d in ld_index),
-            name='Install E')
-        sub.addConstrs((U_E[l] >= U_I[l] for l in l_index), name='One Opening')
         ###### Operation Constraints
         after_degradation = (1 - degrad_rate) ** n
         for i in (0, 1):
@@ -224,7 +220,7 @@ def build_model(mg_id):
                  for g in g_index for t in Outage[g]),
                 name='GridTransaction')
             sub.addConstrs(
-                (Y_I[i][g, t] == e_drp * gp.quicksum(Y_LT[i][g, t, t+1:]) for g, t in gt_minus1_index),
+                (Y_I[i][g, t] == gp.quicksum(Y_LT[i][g, t, t+1:]) for g, t in gt_minus1_index),
                 name='Incentive')
         ###### Costs
         Costs = [0, 0]
@@ -239,7 +235,7 @@ def build_model(mg_id):
                                               for g, t in gt_index))
             C_R = - e_load * (gp.quicksum(Y_ESL[i][g, t] + Y_PVL[i][g, t] + Y_DGL[i][g, t]
                                           for g, t in gt_index))
-            C_IN = - gp.quicksum(Y_I[i][g, t] for g, t in gt_index)
+            C_IN = - e_drp * gp.quicksum(Y_I[i][g, t] for g, t in gt_index)
             Costs[i] = C_LS + C_Cur + C_IE + C_F + C_R + C_IN
 
         # Force scalars to be float
@@ -264,7 +260,7 @@ def build_model(mg_id):
         ##### Free up memory
         sub.dispose()
         del sub
-        del X_E, U_E
+        del X_E
         del Y_PVES, Y_DGES, Y_GridES
         del Y_PVL, Y_DGL, Y_ESL, Y_GridL
         del Y_PVCur, Y_DGCur
