@@ -36,7 +36,7 @@ env_sub.setParam('InfUnbdInfo', 1)
 def LoadSubProblems():
     # Load scenario probabilities
     with open('Data/Probabilities.pkl', 'rb') as handle:
-        probs = pickle.load(handle)
+        scenarios, probs, max_outage_scenario  = pickle.load(handle)
 
     # Open subproblems
     models, TMatrices, rVectors = [], [], []
@@ -45,14 +45,14 @@ def LoadSubProblems():
         for s in range(len(probs)):
             models.append(gp.read(f'Models/Sub{s}.mps', env=env_sub))
             with open(f'Models/Sub{s}-Tr.pkl', 'rb') as handle:
-                TMatrix, rVector, x_keys = pickle.load(handle)
+                TMatrix, rVector = pickle.load(handle)
             TMatrices.append(TMatrix)
             rVectors.append(rVector)
             tbar.update(1)
     TMatrices = np.array(TMatrices)
     rVectors = np.array(rVectors)
 
-    return models, probs, TMatrices, rVectors, x_keys
+    return models, probs, TMatrices, rVectors
 
 
 
@@ -94,9 +94,11 @@ def BendersCut(model, where, models, probs, TMatrices, rVectors, x_keys):
         model.cbLazy(model._vars[-1] + sum(model._vars[x] * E_x for E_x in E) >= e)
 
 
-def BD_BandB(models, probs, TMatrices, rVectors, x_keys):
+def solve_with_BD_BandB(models, probs, TMatrices, rVectors):
     ##### Solve master by callback
     master = gp.read('Models/Master.mps', env=env_master)
+    with open(f'Models/Master.pkl', 'rb') as handle:
+        x_keys, num_locations = pickle.load(handle)
     master._vars = master.getVars()
     master.Params.LazyConstraints = 1
     master.Params.LogFile = "Models/master_log.log"
@@ -104,211 +106,169 @@ def BD_BandB(models, probs, TMatrices, rVectors, x_keys):
     master.optimize(lambda model, where: BendersCut(model, where, models, probs, TMatrices, rVectors, x_keys))
 
     ##### Get optimal x
-    X_values = [x.x for x in master.getVars()] # Save optimal solution of master problem
-    return X_values
+    optimal_x = np.array([x.x for x in master.getVars()]) # Save optimal solution of master problem
+    optimal_obj = master.ObjVal
+    return optimal_x, optimal_obj, x_keys, num_locations
 
 
-if __name__ == '__main__':
+def read_data(mg_id):
+    ############################## Import Data
+    location_df = pd.read_csv(f'Data/location_{mg_id}.csv')
+    general_df = pd.read_csv(f'Data/data_{mg_id}.csv')
+    general_dict = {c: general_df[c].iloc[0] for c in general_df.columns}
+    location_dict = {l: dict(zip(location_df.columns[1:], location_df.iloc[l].values[1:])) for l in
+                     location_df['location']}
+
+    ############################## Power Outage Scenarios
+    OT = pd.read_csv('Scenarios/Outage/Outage_Scenarios_reduced.csv', usecols=['Gamma_Scenario', 'Normalized'])
+    OT_prob = OT['Normalized']
+    OT_scen = np.tile(OT['Gamma_Scenario'], (12, 1))  # [12, OT_count]
+    OT_count = OT_scen.shape[1]
+    ############################## PV
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+              'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    PV_scen = []
+    for m in months:
+        df = pd.read_csv(f'Scenarios/PV/{mg_id}/PVscenario-{m}.csv')
+        week_scen = np.tile(df[df.columns[2:]].iloc[0], (1, 7))
+        PV_scen.append(week_scen)
+    PV_scen = np.array(PV_scen).squeeze(1)
+    ############################## Load scenarios
+    joint_months = ['JanFeb', 'MarApr', 'MayJun', 'JulAug', 'SepOct', 'NovDec']
+    LD_scen = []
+    for m in joint_months:
+        df_w = pd.read_csv(f'Scenarios/Load Demand/{mg_id}/LoadScenarios-{m}-w.csv')
+        df_e = pd.read_csv(f'Scenarios/Load Demand/{mg_id}/LoadScenarios-{m}-e.csv')
+        weekday_scen = np.tile(df_w[df_w.columns[1:]], (1, 5))
+        weekend_scen = np.tile(df_e[df_e.columns[1:]], (1, 2))
+        weeklong_scen = np.concatenate((weekday_scen, weekend_scen), axis=1)
+        num_scens = weeklong_scen.shape[0]
+        weeklong_scen = weeklong_scen.reshape((num_scens, 168, 4)).sum(axis=2)
+        LD_scen.append(weeklong_scen)
+        LD_scen.append(weeklong_scen)
+    LD_prob = np.array(df_w['probs'])
+    LD_scen = np.transpose(np.array(LD_scen), (0, 2, 1))  # [12, 168, LD_count]
+    LD_count = LD_scen.shape[-1]
+    ############################## Load Growth Scenarios
+    LG = pd.read_csv('Scenarios/Load Demand/annual growth scenarios.csv')
+    LG_scen = LG['Lognorm Scenario'] / 100
+    LG_prob = LG['Probability']  # [LG_count]
+    LG_count = LG_scen.shape[0]
+    ############################## Combination Scenarios
+    combination_scen = np.array(list(product(range(OT_count), range(LD_count), range(LG_count))))
+    combination_prob = np.array([OT_prob[s[0]] * LD_prob[s[1]] * LG_prob[s[2]]
+                                 for s in combination_scen])
+    ############################## Max of Outage
+    max_outage_index = np.argmax(OT_scen)
+    max_outage_scenario_index = next(i for i, s in enumerate(combination_scen) if s[0] == max_outage_index)
+    with open('Data/Probabilities.pkl', 'wb') as handle:
+        pickle.dump([combination_scen, combination_prob, max_outage_scenario_index], handle)
+
+    return general_dict, location_dict, \
+        OT_scen, LD_scen, LG_scen, PV_scen, \
+        combination_scen, combination_prob
 
 
-    # Reporting
-    X_values = [x.x for x in master.getVars()] # Save optimal solution of master problem
-    total_cost = master.ObjVal # the objective value of master problem
-    X1, counter = {}, 0  # start changing solution format from a list to dictionary to find ild
-    for ld in X_ld:
-        X1[(ld[0], ld[1])] = X_values[counter]
-        counter += 1
+def solve_subproblems(sub_modles, optimal_x_u, x_keys, probs, num_locations):
+    ### Get sub vars
+    x_u_scenarios = []
+    for sub_model in sub_models:
+        sub_vars = sub_model.getVars()
+        for x_key in x_keys:
+            sub_vars[x_key].UB = optimal_x_u[x_key]
+            sub_vars[x_key].LB = optimal_x_u[x_key]
+        sub_model.update()
+        sub_model.optimize()
+        sub_optimal_vars = sub_model.getVars()[:len(x_keys)]
+        x_u_scenarios.append([var.x for var in sub_optimal_vars])
+    ### Get average
+    average_x_u = np.average(np.array(x_u_scenarios), axis=0, weights=probs)
+    ### Reshape
+    average_x = average_x_u[:num_locations].reshape((num_locations, 3))  # [num_l, 3]
+    average_u = average_x_u[num_locations:].reshape((num_locations, 1))  # [num_l, 1]
+    x_u_E = np.concatenate((average_x, average_u), axis=1)
 
-    #  Solve subproblems for optimal x found
-    X2 = {ld: 0 for ld in X_ld}
-    for scen in SP.keys():
-        vars_optimal = SP[scen].getVars()
-        for x in Xkeys:
-            vars_optimal[x].UB = X_values[x]
-            vars_optimal[x].LB = X_values[x]
-        SP[scen].update()
-        SP[scen].optimize()
-        for ld in X_ld:
-            X2[ld] += Probs[scen] * SP[scen].getVarByName(f'X2[{ld[0]},{ld[1]}]').x
-    pd.DataFrame(X1, index=[0]).to_csv('X1.csv') # master problem solution save
-    pd.DataFrame(X2, index=[0]).to_csv('X2.csv') # subproblem solution save
+    optimal_x = optimal_x_u[:num_locations].reshape((num_locations, 3))  # [num_l, 3]
+    optimal_u = optimal_x_u[num_locations:].reshape((num_locations, 1))  # [num_l, 1]
+    x_u_I = np.concatenate((optimal_x, optimal_u), axis=1)
+    ### Store
+    pd.DataFrame(x_u_I, index=False, columns=['ES', 'PV', 'DG', 'U']).to_csv(f'(MG{mg_id})X_I.csv')
+    pd.DataFrame(x_u_E, index=False, columns=['ES', 'PV', 'DG', 'U']).to_csv(f'(MG{mg_id})X_E.csv')
+    return x_u_I, x_u_E
 
+def get_report(models, x_u_I, x_u_E):
+    with open('Data/Probabilities.pkl', 'rb') as handle:
+        scenarios, probs, max_outage_scenario = pickle.load(handle)
+    S = len(probs)
+    G = 12
+    T = 168
+    outage_start = 15
 
-    Save_Ys = True
-    if Save_Ys:
-        l, m, h = None, None, None
-        for os in Outage_scens.keys():
-            if Outage_scens[os] == 10:
-                if l is None:
-                    l = os
-            elif Outage_scens[os] == 42:
-                if m is None:
-                    m = os
-            elif Outage_scens[os] == 106:
-                if h is None:
-                    h = os
+    #  Resilience Metrics
+    Phi_metric, Lambda_metric, E_metric = np.zeros(S), np.zeros(S), np.zeros(S)
+    bill_saving = np.zeros(S)
+    for s in range(S):
+        # Open Load and Outage hours for each scenario
+        with open(f'Models/Sub{s}-info.pkl', 'wb') as f:
+            Load, Outage_hrs, e_grid, e_load, C = pickle.load(f)
+        # Get Load Shedding vars
+        Y_LSh = np.array([[[models[s].getVarByName(f'Y_LSh[{i}][{g},{t}]').x for t in range(168)]
+                  for g in range(12)]
+                 for i in (0, 1)])  # [2, 12, 168]
+        # Calculate metrics
+        for g in range(G):
+            outage_end = outage_start + len(Outage_hrs[g])
+            # Calculate Phi metric
+            did_shed = Y_LSh[0, g, outage_start:outage_end] >= 0.75 * Load[0, g, outage_start:outage_end]
+            T_fail = np.argmax(~did_shed) if not did_shed.all() else len(did_shed)
+            did_shed = Y_LSh[1, g, outage_start:outage_end] >= 0.75 * Load[1, g, outage_start:outage_end]
+            T_fail += np.argmax(~did_shed) if not did_shed.all() else len(did_shed)
+            Phi_g = T_fail / (2 * Outage_hrs[g])
+            Phi_metric[s] += Phi_g / G
+            # Calculate Lambda metric
+            L_0 = sum(Load[0, g, outage_start:outage_end] - Y_LSh[0, g, outage_start:outage_end]) /\
+                  sum(Load[0, g, outage_start:outage_end])
+            L_1 = sum(Load[1, g, outage_start:outage_end] - Y_LSh[1, g, outage_start:outage_end]) /\
+                  sum(Load[1, g, outage_start:outage_end])
+            Lambda_metric[s] += 0.5 * (L_0 + L_1) / G
+            # Calculate E metric
+            E_0 = sum(Y_LSh[0, g, outage_start:outage_end] >= 0.75 * Load[0, g, outage_start:outage_end])
+            E_1 = sum(Y_LSh[1, g, outage_start:outage_end] >= 0.75 * Load[1, g, outage_start:outage_end])
+            E_metric[s] += (0.5 * (E_0 + E_1) / Outage_hrs[g]) / G
+        # Calculate bill saving
+        Y_ESL = np.array([[[models[s].getVarByName(f'Y_ESL[{i}][{g},{t}]').x for t in range(T)]
+                  for g in range(G)] for i in (0, 1)])
+        Y_DGL = np.array([[[models[s].getVarByName(f'Y_DGL[{i}][{g},{t}]').x for t in range(T)]
+                  for g in range(G)] for i in (0, 1)])
+        Y_PVL = np.array([[[models[s].getVarByName(f'Y_PVL[{i}][{g},{t}]').x for t in range(T)]
+                  for g in range(G)] for i in (0, 1)])
+        es_serving = np.sum((Y_ESL[:, g, :outage_start] + Y_ESL[:, g, outage_end:]).sum() for g in range(G))
+        dg_serving = np.sum((Y_DGL[:, g, :outage_start] + Y_DGL[:, g, outage_end:]).sum() for g in range(G))
+        pv_serving = np.sum((Y_PVL[:, g, :outage_start] + Y_PVL[:, g, outage_end:]).sum() for g in range(G))
+        mg_bill = (es_serving + pv_serving + dg_serving) * e_load
+        grid_bill = (np.sum((Load[:, g, :outage_start] + Load[:, g, outage_end:]).sum() for g in range(G)))*e_grid
+        bill_saving[s] = (grid_bill - mg_bill) / grid_bill
 
-        # Save for scenario low
-        l_ESL = {itg: SP[l].getVarByName(f'Y_ESL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        l_PVES = {itg: SP[l].getVarByName(f'Y_PVES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        l_DGES = {itg: SP[l].getVarByName(f'Y_DGES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        l_DGL = {itg: SP[l].getVarByName(f'Y_DGL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        l_PVL = {itg: SP[l].getVarByName(f'Y_PVL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        l_PVCur = {itg: SP[l].getVarByName(f'Y_PVCur[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        l_PVGrid = {itg: SP[l].getVarByName(f'Y_PVGrid[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        l_LL = {itg: SP[l].getVarByName(f'Y_LL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        l_LT = {ittg: SP[l].getVarByName(f'Y_LT[{ittg[0]},{ittg[1]},{ittg[2]},{ittg[3]}]').x for ittg in Y_ittg}
-        l_E = {itg: SP[l].getVarByName(f'Y_E[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        l_GL = {itg: SP[l].getVarByName(f'Y_GridL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        l_GES = {itg: SP[l].getVarByName(f'Y_GridES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        with open(f'Visualizations/{com_folder[com]} Low_Outage.pkl', 'wb') as handle:
-            pickle.dump([l_ESL, l_PVL, l_PVES, l_DGES, l_DGL, l_LT, l_LL, l_E, l_GL, l_GES, l_PVCur, l_PVGrid], handle)
-        handle.close()
+    # Expected metrics
+    Phi_avg = np.average(Phi_metric, weights=probs)
+    Lambda_avg = np.average(Lambda_metric, weights=probs)
+    E_avg = np.average(E_metric, weights=probs)
+    # Expected bill savings
+    bill_saving_avg = np.average(bill_saving, weights=probs)
+    # Expected recourse
+    costs_avg = np.sum([models[s].ObjVal for s in range(S)])
+    # First year investment
+    investment = np.dot(np.sum(x_u_I[:, :3], axis=0), C)
+    expansion = np.dot(np.sum(x_u_E[:, :3], axis=0), C)
 
-        m_ESL = {itg: SP[m].getVarByName(f'Y_ESL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        m_PVES = {itg: SP[m].getVarByName(f'Y_PVES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        m_DGES = {itg: SP[m].getVarByName(f'Y_DGES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        m_DGL = {itg: SP[m].getVarByName(f'Y_DGL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        m_PVL = {itg: SP[m].getVarByName(f'Y_PVL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        m_PVCur = {itg: SP[m].getVarByName(f'Y_PVCur[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        m_PVGrid = {itg: SP[m].getVarByName(f'Y_PVGrid[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        m_LL = {itg: SP[m].getVarByName(f'Y_LL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        m_LT = {ittg: SP[m].getVarByName(f'Y_LT[{ittg[0]},{ittg[1]},{ittg[2]},{ittg[3]}]').x for ittg in Y_ittg}
-        m_E = {itg: SP[m].getVarByName(f'Y_E[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        m_GL = {itg: SP[m].getVarByName(f'Y_GridL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        m_GES = {itg: SP[m].getVarByName(f'Y_GridES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        with open(f'Visualizations/{com_folder[com]} Medium_Outage.pkl', 'wb') as handle:
-            pickle.dump([m_ESL, m_PVL, m_PVES, m_DGES, m_DGL, m_LT, m_LL, m_E, m_GL, m_GES, m_PVCur, m_PVGrid], handle)
-        handle.close()
-
-        h_ESL = {itg: SP[h].getVarByName(f'Y_ESL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        h_PVES = {itg: SP[h].getVarByName(f'Y_PVES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        h_DGES = {itg: SP[h].getVarByName(f'Y_DGES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        h_DGL = {itg: SP[h].getVarByName(f'Y_DGL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        h_PVL = {itg: SP[h].getVarByName(f'Y_PVL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        h_PVCur = {itg: SP[h].getVarByName(f'Y_PVCur[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        h_PVGrid = {itg: SP[h].getVarByName(f'Y_PVGrid[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        h_LL = {itg: SP[h].getVarByName(f'Y_LL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        h_E = {itg: SP[h].getVarByName(f'Y_E[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        h_LT = {ittg: SP[h].getVarByName(f'Y_LT[{ittg[0]},{ittg[1]},{ittg[2]},{ittg[3]}]').x for ittg in Y_ittg}
-        h_GL = {itg: SP[h].getVarByName(f'Y_GridL[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        h_GES = {itg: SP[h].getVarByName(f'Y_GridES[{itg[0]},{itg[1]},{itg[2]}]').x for itg in Y_itg}
-        with open(f'Visualizations/{com_folder[com]} High_Outage.pkl', 'wb') as handle:
-            pickle.dump([h_ESL, h_PVL, h_PVES, h_DGES, h_DGL, h_LT, h_LL, h_E, h_GL, h_GES, h_PVCur, h_PVGrid], handle)
-        handle.close()
-
-
-    Report = True
-    if Report:
-        print('Reporting started')
-        #  Resilience Metrics
-        EndurList = []
-        SusList = [] # times that load was completely lost
-        LSOList, LOList = [], []  # Load Served in Outage List, Load in Outage List
-        LSnTList, LnTList = [], []  # Load Served when no Transfer List
-        LSnOList, LnOList = [], []  # Load Served when no Outage List
-        LLOList = []  # Load Lost when Outage
-        LTList = []  # Load Transfered
-        ImportList = []
-        for scen in SP.keys():
-            if Outage_scens[scen] >= 168 - 16:
-                outage_hours = range(16, 169)
-            else:
-                outage_hours = range(16, 16 + Outage_scens[scen] + 1)
-
-            AllLoadFailsRate, SustainRate = [], []
-            AllLoadTrans = 0
-            for i in RNGSta:
-                for g in RNGMonth:
-                    Fail = copy.copy(Outage_scens[scen])
-                    for oh in outage_hours[:len(outage_hours)-2]:
-                        yll1 = SP[scen].getVarByName(f'Y_LL[{i},{oh},{g}]').x >=\
-                               0.75 * ((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear) * Load_scens[scen][g][oh-1]
-                        yll2 = SP[scen].getVarByName(f'Y_LL[{i},{oh+1},{g}]').x >= \
-                              0.75 * ((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear) * Load_scens[scen][g][oh]
-
-                        if (yll1, yll2) == (True, True):
-                            Fail = oh - 16
-                            break
-                    AllLoadFailsRate.append(Fail/Outage_scens[scen])
-
-                    for t in RNGTime[:-1]:
-                        AllLoadTrans += sum(SP[scen].getVarByName(f'Y_LT[{i},{t},{tt},{g}]').x
-                                            for tt in range(t, 169))
-                    sustain = 0
-                    for oh in outage_hours:
-                        if SP[scen].getVarByName(f'Y_LL[{i},{oh},{g}]').x != 0:
-                            sustain += 1
-                    SustainRate.append(sustain/Outage_scens[scen])
-            EndurList.append(np.mean(AllLoadFailsRate))
-            SusList.append(np.mean(SustainRate))
-            LTList.append(AllLoadTrans)
-
-
-            LOList.append(sum(((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear) * Load_scens[scen][g][t - 1]
-                                      for i in RNGSta for t in outage_hours for g in RNGMonth))
-
-            LLOList.append(sum(SP[scen].getVarByName(f'Y_LL[{i},{t},{g}]').x
-                                      for i in RNGSta for t in outage_hours for g in RNGMonth))
-
-            LSOList.append(sum(SP[scen].getVarByName(f'Y_ESL[{i},{t},{g}]').x +
-                              SP[scen].getVarByName(f'Y_DGL[{i},{t},{g}]').x +
-                              SP[scen].getVarByName(f'Y_PVL[{i},{t},{g}]').x
-                                        for i in RNGSta for t in outage_hours for g in RNGMonth))
-
-            LSnTList.append(sum(SP[scen].getVarByName(f'Y_ESL[{i},{t},{g}]').x +
-                                         SP[scen].getVarByName(f'Y_DGL[{i},{t},{g}]').x +
-                                         SP[scen].getVarByName(f'Y_PVL[{i},{t},{g}]').x
-                                         for i in RNGSta for g in (1, 2, 3, 6, 7, 8, 9) for t in outage_hours if
-                                         t in DontTrans[g]))
-
-            LnTList.append(sum(((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear) * Load_scens[scen][g][t - 1]
-                                        for i in RNGSta for g in (1, 2, 3, 6, 7, 8, 9) for t in outage_hours if
-                                        t in DontTrans[g]))
-
-            LSnOList.append(sum(SP[scen].getVarByName(f'Y_ESL[{i},{t},{g}]').x +
-                                          SP[scen].getVarByName(f'Y_DGL[{i},{t},{g}]').x +
-                                          SP[scen].getVarByName(f'Y_PVL[{i},{t},{g}]').x
-                                          for i in RNGSta for t in RNGTime if t not in outage_hours for g in RNGMonth))
-            LnOList.append(sum(((1 + (i - 1) * AG_scens[scen]) ** ReInvsYear) * Load_scens[scen][g][t - 1]
-                                         for i in RNGSta for t in RNGTime if t not in outage_hours for g in RNGMonth))
-
-        Endurance = sum([Probs[s] * EndurList[s] for s in SP.keys()])
-        Sustain = sum([Probs[s] * SusList[s] for s in SP.keys()])
-        LoadAssur = eta_i * sum([Probs[s] * LSOList[s] / LOList[s] for s in SP.keys()])
-        PeakAssur = eta_i * sum([Probs[s] * LSnTList[s] / LnTList[s] for s in SP.keys()])
-
-        Bill1 = sum([Probs[s] * LnOList[s] * GridPlus for s in SP.keys()])
-        Bill2 = sum([Probs[s] * (LSnOList[s] * LoadPrice + (LnOList[s] - LSnOList[s]) * GridPlus)
-                     for s in SP.keys()])
-        GridExport = sum(Probs[scen] * sum(SP[scen].getVarByName(f'Y_ESGrid[{itg[0]},{itg[1]},{itg[2]}]').x +
-                                        SP[scen].getVarByName(f'Y_PVGrid[{itg[0]},{itg[1]},{itg[2]}]').x +
-                                        SP[scen].getVarByName(f'Y_DGGrid[{itg[0]},{itg[1]},{itg[2]}]').x
-                                        for itg in Y_itg) for scen in SP.keys())
-        GridImport = sum([Probs[scen] * (LnOList[scen] - LSnOList[scen]) for scen in SP.keys()])
-        GridImportPerc = sum(Probs[scen] * (LnOList[scen] - LSnOList[scen])/LnOList[scen] for scen in SP.keys())
-        #  Save reports
-        report = {'Investment': sum(C[ld[1]] * X1[ld] for ld in X_ld),
-                  'Reinvestment': sum(C[ld[1]] * X2[ld] for ld in X_ld),
-                  'Avg Recourse': sum(Probs[scen] * SP[scen].ObjVal for scen in SP.keys()),
-                  'Load Lost%': sum(Probs[scen] * LLOList[scen]/LOList[scen] for scen in SP.keys()),
-                  'Load Served%': sum(Probs[scen] * LSOList[scen]/LOList[scen] for scen in SP.keys()),
-                  'Load Transferred%': sum(Probs[scen] * LTList[scen] for scen in SP.keys()),
-                  'Grid Load%': GridImportPerc,
-                  'Grid Exported': GridExport,
-                  'Grid Imported': GridImport,
-                  'Bill Before': Bill1,
-                  'Bill After': Bill2,
-                  'Impact Endurance': Endurance,
-                  'Sustained Access': Sustain,
-                  'Load Assurance': LoadAssur,
-                  'Peak Assurance': PeakAssur,
-                  'ES1': sum(X1[ld] for ld in X_ld if ld[1] == 1),
-                  'PV1': sum(X1[ld] for ld in X_ld if ld[1] == 2),
-                  'DG1': sum(X1[ld] for ld in X_ld if ld[1] == 3),
-                  'ES2': sum(X2[ld] for ld in X_ld if ld[1] == 1),
-                  'PV2': sum(X2[ld] for ld in X_ld if ld[1] == 2),
-                  'DG2': sum(X2[ld] for ld in X_ld if ld[1] == 3)
-                  }
-        pd.DataFrame(report, index=[0]).to_csv('Report.csv')
+    #  Save reports
+    report = {'Investment': investment,
+              'Reinvestment': expansion,
+              'Avg Recourse': costs_avg,
+              'Bill Saving': bill_saving_avg,
+              'Phi metric': Phi_avg,
+              'Lambda metric': Lambda_avg,
+              'E metric': E_avg
+              }
+    pd.DataFrame(report, index=[0]).to_csv('Report.csv')
 
