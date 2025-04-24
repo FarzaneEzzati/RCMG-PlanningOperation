@@ -49,9 +49,6 @@ def LoadSubProblems():
             TMatrices.append(TMatrix)
             rVectors.append(rVector)
             tbar.update(1)
-    TMatrices = np.array(TMatrices)
-    rVectors = np.array(rVectors)
-
     return models, probs, TMatrices, rVectors
 
 

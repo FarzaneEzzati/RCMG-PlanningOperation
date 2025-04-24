@@ -251,7 +251,7 @@ def build_model(mg_id):
         AMatrix = sub.getA()  # [constraints, vars]
         Constrs = sub.getConstrs()
         TMatrix = AMatrix[:, 0:len(X_I_keys)]
-        rVector = np.array(sub.getAttr("RHS", Constrs))
+        rVector = np.array([sub.getAttr("RHS", Constrs)])
         sub.write(f'Models/Sub{scenario_index}.mps')
         with open(f'Models/Sub{scenario_index}-Tr.pkl', 'wb') as f:
             pickle.dump([TMatrix, rVector], f)
