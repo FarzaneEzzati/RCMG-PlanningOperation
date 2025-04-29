@@ -98,22 +98,21 @@ def build_models(mg_id):
     capital_cost = sum(F[l] * U_I[l] for l in range(L)) + sum(X_I[l, d] * C[d] for l in l_index for d in d_index)
     operation_cost = sum(X_I[l, d] * O[d] for l in l_index for d in d_index)
     
-    master_constrts = []
-    master_constrts.append((1 - sv_subsidy_rate) * capital_cost <= Budget_I)
+    master_constrts = {}
+    master_constrts[f'budget'] = ((1 - sv_subsidy_rate) * capital_cost <= Budget_I)
     for l in l_index:
         for d in d_index:
-            master_constrts.append(X_I[l, d] <= device_ub[l, d] * U_I[l])
-    master_constrts.append(sv_subsidy_rate * capital_cost <= total_subsidy)
-    print(master_constrts[0])
-    master.addConstrs((c for c in master_constrts))
+            master_constrts[f'X_I[{l},{d}]'] = (X_I[l, d] <= device_ub[l, d] * U_I[l])
+    master_constrts[f'subsidy'] = (sv_subsidy_rate * capital_cost <= total_subsidy)
+    master.addConstrs((c for c in master_constrts.values()))
     master.setObjective((1 - sv_subsidy_rate) * capital_cost + operation_cost + eta, sense=GRB.MINIMIZE)
+
     ##### Save master in mps + save data in pickle
     master.update()
     master.write('Models/Master.mps')
     x_keys = range(L * D)
     with open('Models/Master.pkl', 'wb') as f:
         pickle.dump([x_keys, L], f)
-    print(master)
 
 
     ############################## Second Stage Models
@@ -167,62 +166,57 @@ def build_models(mg_id):
         ###### Operation Constraints
         after_degradation = (1 - degrad_rate) ** n
 
-        sub_constrs = []
+        sub_constrs = {}
         for i in range(I):
             available_es = sum((i * after_degradation * X_I[l, 0] + i * X_E[l, 0] for l in l_index))
             for g in g_index:
-                sub_constrs.append(Y_E[i, g, 0] == es_soc_ub * available_es, name='Et0')
+                sub_constrs[f'es_t0[{i},{g},0]'] = Y_E[i, g, 0] == es_soc_ub * available_es
                 print(g)
                 #sub.addConstr(sum(Y_LT[i, g, t, t] for t in t_index) == 0, name = 'NoTransToSelf')
                 start = time()
                 for t in t_index:
                     trans_to_t = sum(Y_LT[i, g, to, t] for to in range(t))
                     trans_from_t = sum(Y_LT[i, g, t, to] for to in range(t+1, T))
-                    sub_constrs.append(Y_ESL[i, g, t] + Y_ESGrid[i, g, t] <= (es_soc_ub - es_soc_lb) * available_es,
-                        name='ES_Discharge')
-                    sub_constrs.append(Y_E[i, g, t] + trans_to_t >= es_soc_lb * available_es,
-                        name='E_LB')
-                    sub_constrs.append(Y_E[i, g, t] + trans_to_t <= es_soc_ub * available_es,
-                        name='E_UB')
+                    sub_constrs[f'es_dis[{i},{g},{t}]'] = Y_ESL[i, g, t] + Y_ESGrid[i, g, t] <= (es_soc_ub - es_soc_lb) * available_es
+                    sub_constrs[f'es_lb[{i},{g},{t}]'] = Y_E[i, g, t] + trans_to_t >= es_soc_lb * available_es
+                    sub_constrs[f'es_ub[{i},{g},{t}]'] = Y_E[i, g, t] + trans_to_t <= es_soc_ub * available_es
                     a = time()
-                    sub.addConstr(Y_PVES[i, g, t] + Y_DGES[i, g, t] + Y_GridES[i, g, t] <= (es_soc_ub - es_soc_lb) * available_es,
-                        name='ES_Charge')
-                    print(time()-a)
-                    sub.addConstr(Y_PVL[i, g, t] + Y_PVGrid[i, g, t] + Y_PVCur[i, g, t] + Y_PVES[i, g, t] <=
-                        PV * sum(X_I[l, 1] + i * X_E[l, 1] for l in l_index),
-                        name='PV')
-                    sub.addConstr(Y_DGL[i, g, t] + Y_DGGrid[i, g, t] + Y_DGES[i, g, t] + Y_DGCur[i, g, t] <=
-                        dg_effi * sum(X_I[l, 2] + i * X_E[l, 2] for l in l_index),
-                        name='DG')
-                    sub.addConstr(Y_ESL[i, g, t] + Y_DGL[i, g, t] + Y_PVL[i, g, t] + Y_GridL[i, g, t] + Y_LSh[i, g, t] +
-                        trans_to_t - trans_from_t == Load[i, g, t],
-                        name='LoadD')
+                    sub_constrs[f'es_cha[{i},{g},{t}]'] = Y_PVES[i, g, t] + Y_DGES[i, g, t] + Y_GridES[i, g, t] <= (es_soc_ub - es_soc_lb) * available_es
+                    sub_constrs[f'PV[{i},{g},{t}]'] = Y_PVL[i, g, t] + Y_PVGrid[i, g, t] + \
+                                                      Y_PVCur[i, g, t] + Y_PVES[i, g, t] <= \
+                                                      PV * sum(X_I[l, 1] + i * X_E[l, 1] for l in l_index)
+                    sub_constrs[f'DG[{i},{g},{t}]'] = Y_DGL[i, g, t] + Y_DGGrid[i, g, t] + \
+                                                      Y_DGES[i, g, t] + Y_DGCur[i, g, t] <= \
+                                                      dg_effi * sum(X_I[l, 2] + i * X_E[l, 2] for l in l_index)
+                    sub_constrs[f'Load[{i},{g},{t}]'] = Y_ESL[i, g, t] + Y_DGL[i, g, t] + \
+                                                        Y_PVL[i, g, t] + Y_GridL[i, g, t] + \
+                                                        Y_LSh[i, g, t] + trans_to_t - trans_from_t == \
+                                                        Load[i, g, t]
                     # Outage and Trans times
                     if t not in Outage[g]:
-                        sub.addConstr(Y_LSh[i, g, t] == 0, name='NoOutNoLoss')
-                        sub.addConstr(Y_GridL[i, g, t] >= 0.75 * Load[i, g, t], name='NoOutUseGrid')
-                        sub.addConstr(trans_to_t == 0, name='NoTransToNonOut')
+                        sub_constrs[f'no_out_no_shed[{i},{g},{t}]'] = Y_LSh[i, g, t] == 0
+                        sub_constrs[f'no_out_no_transto[{i},{g},{t}]'] = trans_to_t == 0
                     else:
-                        sub.addConstr(trans_from_t <= drp * Load[i, g, t], name='MaxLoadTrans')
+                        sub_constrs[f'grid_trade[{i},{g},{t}]'] = Y_GridL[i, g, t] + Y_GridES[i, g, t] + \
+                                                                  Y_PVGrid[i, g, t] + Y_ESGrid[i, g, t] + \
+                                                                  Y_DGGrid[i, g, t] == 0
+                        sub_constrs[f'trans-max[{i},{g},{t}]'] = trans_from_t <= drp * Load[i, g, t]
                     if t in no_trans[g]:
-                        sub.addConstr(trans_from_t == 0, name='NoTrans')
+                        sub_constrs[f'trans_off[{i},{g},{t}]'] = trans_from_t == 0
                     else:
-                        sub.addConstr(trans_from_t <= Y_E[i, g, t] - es_soc_lb * available_es, name='TransIfPoss')
-
+                        sub_constrs[f'trans_if_es[{i},{g},{t}]'] = trans_from_t <= Y_E[i, g, t] - \
+                                                                   es_soc_lb * available_es
                     # Balance
                     if t < T-1:
-                        sub.addConstr(Y_E[i, g, t + 1] == Y_E[i, g, t] -
-                            trans_from_t +
-                            es_effi * (Y_PVES[i, g, t] + Y_DGES[i, g, t] + es_eta * Y_GridES[i, g, t]) -
-                            es_eta * (Y_ESL[i, g, t] + Y_ESGrid[i, g, t]) / es_effi,
-                            name='Balance')
-                    sub.addConstr(Y_GridL[i, g, t] + Y_GridES[i, g, t] +
-                        Y_PVGrid[i, g, t] + Y_ESGrid[i, g, t] + Y_DGGrid[i, g, t] == 0,
-                        name='GridTransaction')
-                    sub.addConstr(Y_I[i, g, t] == trans_from_t, name='Incentive')
+                        sub_constrs[f'balance[{i},{g},{t}]'] = Y_E[i, g, t + 1] == \
+                                                               Y_E[i, g, t] - trans_from_t + \
+                                                               es_effi * (Y_PVES[i, g, t] + Y_DGES[i, g, t] +
+                                                                          es_eta * Y_GridES[i, g, t]) -\
+                                                               es_eta * (Y_ESL[i, g, t] + Y_ESGrid[i, g, t]) / es_effi
+                    sub_constrs[f'incentive[{i},{g},{t}]'] = Y_I[i, g, t] == trans_from_t
                     print(time() - start)
                     start =time()
-                    break
+        sub.addConstrs((c for c in sub_constrs))
         ###### Costs
         Costs = [0, 0]
         for i in range(I):
