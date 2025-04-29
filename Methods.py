@@ -6,13 +6,15 @@ import numpy as np
 from tqdm import tqdm
 import copy
 from typing import Dict
+from itertools import product
 
 env_master = gp.Env()
+env_master.setParam('OutputFlag', 0)
 env_sub = gp.Env()
 env_sub.setParam('OutputFlag', 0)
 env_sub.setParam('DualReductions', 0)
 env_sub.setParam('InfUnbdInfo', 1)
-
+env_sub.setParam('Presolve', 0)
 
 '''class BendersCut:
     def __init__(self, models, probs, TMatrices, rVectors, x_keys):
@@ -52,11 +54,9 @@ def LoadSubProblems():
     return models, probs, TMatrices, rVectors
 
 
-
 def GetPIs(optimal_x, models, probs, TMatrices, rVectors, x_keys):
     duals = []  # Dictionary of dual multipliers
     s_range = range(len(probs))
-    n_xs = len(x_keys)
     #### Optimize first
     for s, f in enumerate(models):
         vars = f.getVars()
@@ -67,15 +67,17 @@ def GetPIs(optimal_x, models, probs, TMatrices, rVectors, x_keys):
         f.optimize()
         if f.status == 2:
             duals.append(np.array([c.Pi for c in f.getConstrs()]))
-    duals = np.array(duals)
 
     # Calculate two values e and E for Benders
-    duals_r = np.array([np.dot(duals[s], rVectors[s]) for s in s_range])   # [S]
+    duals_r = np.array([np.dot(duals[s], rVectors[s][0]) for s in s_range])   # [S]
     e = np.average(duals_r, weights=probs)
-    E = []
-    for x_key in x_keys:
-        Temp1 = np.array([np.dot(TMatrices[s][:, x_key], duals[s]) for s in s_range]) # [S, C]
-        E.append(np.average(Temp1, weights=probs))
+    E = np.zeros_like(x_keys)
+    print(duals[0])
+
+    for s in s_range:
+        row_indices, col_indices = TMatrices[s].nonzero()  # row: constrt, col: x var
+        for (r,c) in zip(row_indices, col_indices):
+            E[c] += probs[s] * TMatrices[s][r,c] * duals[s][r]
     return E, e
 
 
@@ -87,8 +89,11 @@ def BendersCut(model, where, models, probs, TMatrices, rVectors, x_keys):
         E, e = GetPIs(optimal_x=X, models=models, probs=probs,
                           TMatrices=TMatrices, rVectors=rVectors,
                           x_keys=x_keys)
-        # Add a cut based on the solution # For example, adding a simple cut:
-        model.cbLazy(model._vars[-1] + sum(model._vars[x] * E_x for E_x in E) >= e)
+        # Add a cut
+        print('cut added')
+        print(E, e)
+        model.cbLazy(model._vars[-1] + sum(model._vars[x] * E[x] for x in x_keys) >= e)
+
 
 
 def solve_with_BD_BandB(models, probs, TMatrices, rVectors):
@@ -103,9 +108,10 @@ def solve_with_BD_BandB(models, probs, TMatrices, rVectors):
     master.optimize(lambda model, where: BendersCut(model, where, models, probs, TMatrices, rVectors, x_keys))
 
     ##### Get optimal x
-    optimal_x = np.array([x.x for x in master.getVars()]) # Save optimal solution of master problem
+    optimal_x = np.array([x.x for x in master._vars[:-1]]) # Save optimal solution of master problem
     optimal_obj = master.ObjVal
     return optimal_x, optimal_obj, x_keys, num_locations
+
 
 
 def read_data(mg_id):
@@ -165,7 +171,9 @@ def read_data(mg_id):
         OT_scen, LD_scen, LG_scen, PV_scen, \
         combination_scen, combination_prob
 
-def solve_subproblems(sub_modles, optimal_x, x_keys, probs, num_locations):
+
+
+def solve_subproblems(sub_models, optimal_x, x_keys, probs, num_locations, mg_id):
     ### Get sub vars
     x_scenarios = []
     for sub_model in sub_models:
@@ -175,22 +183,29 @@ def solve_subproblems(sub_modles, optimal_x, x_keys, probs, num_locations):
             sub_vars[x_key].LB = optimal_x[x_key]
         sub_model.update()
         sub_model.optimize()
-        sub_optimal_vars = sub_model.getVars()[:len(x_keys)]
-        x_scenarios.append([var.x for var in sub_optimal_vars])
+        print(sub_model.getVarByName('X_E[3,0]').x,
+              sub_model.getVarByName('Y_PVL[1,5,2]').x,
+              sub_model.getVarByName('Y_DGL[1,5,2]').x,
+              sub_model.getVarByName('Y_GridL[1,5,2]').x,
+              sub_model.getVarByName('Y_LSh[1,5,2]').x,
+              sub_model.getVarByName('Y_LT[1,5,0,2]').x + sub_model.getVarByName('Y_LT[1,5,1,2]').x,
+              sub_model.getVarByName('Y_DGCur[1,5,2]').x,
+              sub_model.getConstrByName('LoadD'))
+        x_scenarios.append([sub_model.getVarByName(f'X_E[{l},{d}]').x for l, d in np.ndindex(num_locations, 3)])
     ### Get average
     average_x = np.average(np.array(x_scenarios), axis=0, weights=probs)
     ### Reshape
-    average_x = average_x[:num_locations].reshape((num_locations, 3))  # [num_l, 3]
-    average_u = average_x[num_locations:].reshape((num_locations, 1))  # [num_l, 1]
-    x_E = np.concatenate((average_x, average_u), axis=1)
+    x_E = average_x.reshape((num_locations, 3)) 
 
-    optimal_x = optimal_x[:num_locations].reshape((num_locations, 3))  # [num_l, 3]
-    optimal_u = optimal_x[num_locations:].reshape((num_locations, 1))  # [num_l, 1]
-    x_I = np.concatenate((optimal_x, optimal_u), axis=1)
+    x_part = optimal_x[:num_locations*3].reshape((num_locations, 3))  # [num_l, 3]
+    u_part = optimal_x[num_locations*3:].reshape((num_locations, 1))  # [num_l, 1]
+    x_I = np.concatenate((x_part, u_part), axis=1)
     ### Store
-    pd.DataFrame(x_I, index=False, columns=['ES', 'PV', 'DG', 'U']).to_csv(f'(MG{mg_id})X_I.csv')
-    pd.DataFrame(x_E, index=False, columns=['ES', 'PV', 'DG', 'U']).to_csv(f'(MG{mg_id})X_E.csv')
+    pd.DataFrame(x_I, columns=['ES', 'PV', 'DG', 'U']).to_csv(f'Results/(MG{mg_id})X_I.csv')
+    pd.DataFrame(x_E, columns=['ES', 'PV', 'DG']).to_csv(f'Results/(MG{mg_id})X_E.csv')
     return x_I, x_E
+
+
 
 def get_report(models, x_I, x_E):
     with open('Data/Probabilities.pkl', 'rb') as handle:

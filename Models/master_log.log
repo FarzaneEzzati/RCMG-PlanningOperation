@@ -353,3 +353,229 @@ Optimal solution found (tolerance 1.00e-04)
 Best objective -1.000000000000e+04, best bound -1.000000000000e+04, gap 0.0000%
 
 User-callback calls 25, time in user-callback 73.65 sec
+
+Gurobi 10.0.3 (linux64) logging started Thu Apr 24 16:11:38 2025
+
+Set parameter LogFile to value "Models/master_log.log"
+Set parameter DegenMoves to value 0
+Gurobi Optimizer version 10.0.3 build v10.0.3rc0 (linux64)
+
+CPU model: Intel(R) Xeon(R) CPU E5-2690 v2 @ 3.00GHz, instruction set [SSE2|AVX]
+Thread count: 20 physical cores, 40 logical processors, using up to 20 threads
+
+Optimize a model with 2 rows, 21 columns and 40 nonzeros
+Model fingerprint: 0x6b5be69d
+Variable types: 1 continuous, 20 integer (5 binary)
+Coefficient statistics:
+  Matrix range     [1e+02, 4e+04]
+  Objective range  [1e+00, 4e+04]
+  Bounds range     [1e+00, 1e+04]
+  RHS range        [2e+04, 5e+05]
+Found heuristic solution: objective -10000.00000
+
+Explored 0 nodes (0 simplex iterations) in 32.71 seconds (0.00 work units)
+Thread count was 1 (of 40 available processors)
+
+Solution count 1: -10000 
+No other solutions better than -10000
+
+Optimal solution found (tolerance 1.00e-04)
+Best objective -1.000000000000e+04, best bound -1.000000000000e+04, gap 0.0000%
+
+User-callback calls 25, time in user-callback 32.70 sec
+
+Gurobi 10.0.3 (linux64) logging started Thu Apr 24 16:15:12 2025
+
+Set parameter LogFile to value "Models/master_log.log"
+Set parameter DegenMoves to value 0
+Gurobi Optimizer version 10.0.3 build v10.0.3rc0 (linux64)
+
+CPU model: Intel(R) Xeon(R) CPU E5-2690 v2 @ 3.00GHz, instruction set [SSE2|AVX]
+Thread count: 20 physical cores, 40 logical processors, using up to 20 threads
+
+Optimize a model with 2 rows, 21 columns and 40 nonzeros
+Model fingerprint: 0x6b5be69d
+Variable types: 1 continuous, 20 integer (5 binary)
+Coefficient statistics:
+  Matrix range     [1e+02, 4e+04]
+  Objective range  [1e+00, 4e+04]
+  Bounds range     [1e+00, 1e+04]
+  RHS range        [2e+04, 5e+05]
+Found heuristic solution: objective -10000.00000
+
+Explored 0 nodes (0 simplex iterations) in 3.65 seconds (0.00 work units)
+Thread count was 1 (of 40 available processors)
+
+Solution count 1: -10000 
+No other solutions better than -10000
+
+Optimal solution found (tolerance 1.00e-04)
+Best objective -1.000000000000e+04, best bound -1.000000000000e+04, gap 0.0000%
+
+User-callback calls 25, time in user-callback 3.65 sec
+
+Gurobi 10.0.3 (linux64) logging started Thu Apr 24 16:16:16 2025
+
+Set parameter LogFile to value "Models/master_log.log"
+Set parameter DegenMoves to value 0
+Gurobi Optimizer version 10.0.3 build v10.0.3rc0 (linux64)
+
+CPU model: Intel(R) Xeon(R) CPU E5-2690 v2 @ 3.00GHz, instruction set [SSE2|AVX]
+Thread count: 20 physical cores, 40 logical processors, using up to 20 threads
+
+Optimize a model with 2 rows, 21 columns and 40 nonzeros
+Model fingerprint: 0x6b5be69d
+Variable types: 1 continuous, 20 integer (5 binary)
+Coefficient statistics:
+  Matrix range     [1e+02, 4e+04]
+  Objective range  [1e+00, 4e+04]
+  Bounds range     [1e+00, 1e+04]
+  RHS range        [2e+04, 5e+05]
+Found heuristic solution: objective -10000.00000
+
+Explored 0 nodes (0 simplex iterations) in 84.83 seconds (0.00 work units)
+Thread count was 1 (of 40 available processors)
+
+Solution count 1: -10000 
+No other solutions better than -10000
+
+Optimal solution found (tolerance 1.00e-04)
+Best objective -1.000000000000e+04, best bound -1.000000000000e+04, gap 0.0000%
+
+User-callback calls 25, time in user-callback 84.82 sec
+
+Gurobi 10.0.3 (linux64) logging started Sun Apr 27 17:34:34 2025
+
+
+Gurobi 10.0.3 (linux64) logging started Mon Apr 28 13:09:34 2025
+
+
+Gurobi 10.0.3 (linux64) logging started Mon Apr 28 13:16:31 2025
+
+
+Gurobi 10.0.3 (linux64) logging started Mon Apr 28 13:19:26 2025
+
+
+Gurobi 10.0.3 (linux64) logging started Mon Apr 28 13:19:57 2025
+
+
+Gurobi 10.0.3 (linux64) logging started Mon Apr 28 13:33:16 2025
+
+
+Gurobi 10.0.3 (linux64) logging started Mon Apr 28 13:58:09 2025
+
+
+Gurobi 10.0.3 (linux64) logging started Mon Apr 28 14:01:33 2025
+
+
+Gurobi 10.0.3 (linux64) logging started Mon Apr 28 14:03:17 2025
+
+Set parameter LogFile to value "Models/master_log.log"
+Set parameter DegenMoves to value 0
+Gurobi Optimizer version 10.0.3 build v10.0.3rc0 (linux64)
+
+CPU model: Intel(R) Xeon(R) CPU E5-2690 v2 @ 3.00GHz, instruction set [SSE2|AVX]
+Thread count: 20 physical cores, 40 logical processors, using up to 20 threads
+
+Optimize a model with 2 rows, 21 columns and 40 nonzeros
+Model fingerprint: 0x6b5be69d
+Variable types: 1 continuous, 20 integer (5 binary)
+Coefficient statistics:
+  Matrix range     [1e+02, 4e+04]
+  Objective range  [1e+00, 4e+04]
+  Bounds range     [1e+00, 1e+04]
+  RHS range        [2e+04, 5e+05]
+Presolve removed 1 rows and 0 columns
+Presolve time: 0.00s
+Presolved: 1 rows, 21 columns, 20 nonzeros
+Variable types: 1 continuous, 20 integer (5 binary)
+
+Root simplex log...
+
+Iteration    Objective       Primal Inf.    Dual Inf.      Time
+       0    0.0000000e+00   0.000000e+00   0.000000e+00     24s
+
+Root relaxation: objective 0.000000e+00, 0 iterations, 0.00 seconds (0.00 work units)
+
+    Nodes    |    Current Node    |     Objective Bounds      |     Work
+ Expl Unexpl |  Obj  Depth IntInf | Incumbent    BestBd   Gap | It/Node Time
+
+*    0     0               0       0.0000000    0.00000  0.00%     -   27s
+
+Cutting planes:
+  Lazy constraints: 1
+
+Explored 1 nodes (0 simplex iterations) in 27.86 seconds (0.00 work units)
+Thread count was 20 (of 40 available processors)
+
+Solution count 1: 0 
+
+Optimal solution found (tolerance 1.00e-04)
+Best objective 0.000000000000e+00, best bound 0.000000000000e+00, gap 0.0000%
+
+User-callback calls 159, time in user-callback 27.85 sec
+
+Gurobi 10.0.3 (linux64) logging started Mon Apr 28 14:06:53 2025
+
+Set parameter LogFile to value "Models/master_log.log"
+Set parameter DegenMoves to value 0
+Gurobi Optimizer version 10.0.3 build v10.0.3rc0 (linux64)
+
+CPU model: Intel(R) Xeon(R) CPU E5-2690 v2 @ 3.00GHz, instruction set [SSE2|AVX]
+Thread count: 20 physical cores, 40 logical processors, using up to 20 threads
+
+Optimize a model with 2 rows, 21 columns and 40 nonzeros
+Model fingerprint: 0x6b5be69d
+Variable types: 1 continuous, 20 integer (5 binary)
+Coefficient statistics:
+  Matrix range     [1e+02, 4e+04]
+  Objective range  [1e+00, 4e+04]
+  Bounds range     [1e+00, 1e+04]
+  RHS range        [2e+04, 5e+05]
+Presolve removed 1 rows and 0 columns
+Presolve time: 0.00s
+Presolved: 1 rows, 21 columns, 20 nonzeros
+Variable types: 1 continuous, 20 integer (5 binary)
+
+Root simplex log...
+
+Iteration    Objective       Primal Inf.    Dual Inf.      Time
+       0    0.0000000e+00   0.000000e+00   0.000000e+00     23s
+
+Root relaxation: objective 0.000000e+00, 0 iterations, 0.00 seconds (0.00 work units)
+
+    Nodes    |    Current Node    |     Objective Bounds      |     Work
+ Expl Unexpl |  Obj  Depth IntInf | Incumbent    BestBd   Gap | It/Node Time
+
+*    0     0               0       0.0000000    0.00000  0.00%     -   28s
+
+Cutting planes:
+  Lazy constraints: 1
+
+Explored 1 nodes (0 simplex iterations) in 28.62 seconds (0.00 work units)
+Thread count was 20 (of 40 available processors)
+
+Solution count 1: 0 
+
+Optimal solution found (tolerance 1.00e-04)
+Best objective 0.000000000000e+00, best bound 0.000000000000e+00, gap 0.0000%
+
+User-callback calls 159, time in user-callback 28.60 sec
+
+Gurobi 10.0.3 (linux64) logging started Mon Apr 28 14:07:29 2025
+
+
+Gurobi 10.0.3 (linux64) logging started Mon Apr 28 14:49:04 2025
+
+
+Gurobi 10.0.3 (linux64) logging started Mon Apr 28 15:10:52 2025
+
+
+Gurobi 10.0.3 (linux64) logging started Mon Apr 28 15:15:29 2025
+
+
+Gurobi 10.0.3 (linux64) logging started Mon Apr 28 15:20:21 2025
+
+
+Gurobi 10.0.3 (linux64) logging started Mon Apr 28 17:13:03 2025
+
