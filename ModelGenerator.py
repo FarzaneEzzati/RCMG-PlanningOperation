@@ -167,82 +167,51 @@ def build_models(mg_id):
         for i in range(I):
             available_es = sum((i * after_degradation * X_I[l, 0] + i * X_E[l, 0] for l in l_index))
             for g in g_index:
-                sub.addConstr(Y_E[i, g, 0] == es_soc_ub * available_es, ame='Et0')
+                sub.addConstr(Y_E[i, g, 0] == es_soc_ub * available_es, name='Et0')
+                print(g)
+                #sub.addConstr(sum(Y_LT[i, g, t, t] for t in t_index) == 0, name = 'NoTransToSelf')
                 for t in t_index:
-                    sub.addConstr(Y_ESL[i, g, t] + Y_ESGrid[i, g, t] <= (es_soc_ub - es_soc_lb) * available_es 
-                        for g in g_index for t in t_index),
+                    trans_to_t = sum(Y_LT[i, g, to, t] for to in range(t))
+                    trans_from_t = sum(Y_LT[i, g, t, to] for to in range(t+1, T))
+                    sub.addConstr(Y_ESL[i, g, t] + Y_ESGrid[i, g, t] <= (es_soc_ub - es_soc_lb) * available_es,
                         name='ES_Discharge')
-                    sub.addConstrs(
-                        (Y_E[i, g, t] + sum(Y_LT[i, g, to, t] for to in range(t)) >= es_soc_lb * available_es 
-                        for g in g_index for t in t_index),
+                    sub.addConstr(Y_E[i, g, t] + trans_to_t >= es_soc_lb * available_es,
                         name='E_LB')
-                    sub.addConstrs(
-                        (Y_E[i, g, t] + sum(Y_LT[i, g, to, t] for to in range(t)) <= es_soc_ub * available_es 
-                        for g in g_index for t in t_index),
+                    sub.addConstr(Y_E[i, g, t] + trans_to_t <= es_soc_ub * available_es,
                         name='E_UB')
                     sub.addConstr(Y_PVES + Y_DGES + Y_GridES <= (es_soc_ub - es_soc_lb) * available_es,
                         name='ES_Charge')
-                    sub.update()
-                    sub.addConstrs(
-                        (Y_PVL[i, g, t] + Y_PVGrid[i, g, t] + Y_PVCur[i, g, t] + Y_PVES[i, g, t] <= 
-                        PV * sum(X_I[l, 1] + i * X_E[l, 1] for l in l_index)
-                        for g in g_index for t in t_index),
+                    sub.addConstr(Y_PVL[i, g, t] + Y_PVGrid[i, g, t] + Y_PVCur[i, g, t] + Y_PVES[i, g, t] <=
+                        PV * sum(X_I[l, 1] + i * X_E[l, 1] for l in l_index),
                         name='PV')
-                    sub.addConstrs(
-                        (Y_DGL[i, g, t] + Y_DGGrid[i, g, t] + Y_DGES[i, g, t] + Y_DGCur[i, g, t] <= 
-                        dg_effi * sum(X_I[l, 2] + i * X_E[l, 2] for l in l_index) 
-                        for g in g_index for t in t_index), 
+                    sub.addConstr(Y_DGL[i, g, t] + Y_DGGrid[i, g, t] + Y_DGES[i, g, t] + Y_DGCur[i, g, t] <=
+                        dg_effi * sum(X_I[l, 2] + i * X_E[l, 2] for l in l_index),
                         name='DG')
-                    sub.addConstrs(
-                        (Y_ESL[i, g, t] + Y_DGL[i, g, t] + Y_PVL[i, g, t] + Y_GridL[i, g, t] + Y_LSh[i, g, t] +
-                        sum(Y_LT[i, g, to, t] for to in range(t)) - 
-                        sum(Y_LT[i, g, t, to] for to in range(t + 1, T)) == Load[i, g, t] 
-                        for g in g_index for t in t_index),
+                    sub.addConstr(Y_ESL[i, g, t] + Y_DGL[i, g, t] + Y_PVL[i, g, t] + Y_GridL[i, g, t] + Y_LSh[i, g, t] +
+                        trans_to_t - trans_from_t == Load[i, g, t],
                         name='LoadD')
                     # Outage and Trans times
-                    sub.addConstrs(
-                        (Y_LSh[i, g, t] == 0 
-                        for g in g_index for t in t_index if t not in Outage[g]), 
-                        name='NoOutNoLoss')
-                    sub.addConstrs(
-                        (Y_GridL[i, g, t] >= 0.75 * Load[i, g, t]
-                        for g in g_index for t in t_index if t not in Outage[g]),
-                        name='NoOutUseGrid')
-                    sub.addConstrs(
-                        (sum(Y_LT[i, g, to, t] for to in range(1, t)) == 0 
-                        for g in g_index for t in t_index if t not in Outage[g]),
-                        name='NoTransToNonOut')
-                    sub.addConstr(
-                        (sum(Y_LT[i, g, t, to] for to in range(t + 1, T)) <= drp * Load[i, g, t] 
-                        for g in g_index for t in t_index if t in Outage[g]),
-                        name='MaxLoadTrans')
-                    sub.addConstrs(
-                        (sum(Y_LT[i, g, t, to] for to in range(t + 1, T)) == 0
-                        for g in g_index for t in t_index if t in no_trans[g]), 
-                        name='NoTrans')
-                    sub.addConstrs(
-                        (sum(Y_LT[i, g, t, to] for to in range(t+1, T)) <= Y_E[i, g, t] - es_soc_lb * available_es
-                        for g in g_index for t in t_index if t not in no_trans[g]),
-                        name='TransIfPoss')
-                    sub.addConstrs(
-                        (sum(Y_LT[i, g, t, t] for g in g_index for t in t_index) == 0),
-                        name='NoTransToSelf')
+                    if t not in Outage[g]:
+                        sub.addConstr(Y_LSh[i, g, t] == 0, name='NoOutNoLoss')
+                        sub.addConstr(Y_GridL[i, g, t] >= 0.75 * Load[i, g, t], name='NoOutUseGrid')
+                        sub.addConstr(trans_to_t == 0, name='NoTransToNonOut')
+                    else:
+                        sub.addConstr(trans_from_t <= drp * Load[i, g, t], name='MaxLoadTrans')
+                    if t in no_trans[g]:
+                        sub.addConstr(trans_from_t == 0, name='NoTrans')
+                    else:
+                        sub.addConstr(trans_from_t <= Y_E[i, g, t] - es_soc_lb * available_es, name='TransIfPoss')
+
                     # Balance
-                    sub.addConstrs(
-                        (Y_E[i, g, t + 1] == Y_E[i, g, t] -
-                        sum(Y_LT[i, g, t, to] for to in range(t, T)) +
+                    sub.addConstr(Y_E[i, g, t + 1] == Y_E[i, g, t] -
+                        trans_from_t +
                         es_effi * (Y_PVES[i, g, t] + Y_DGES[i, g, t] + es_eta * Y_GridES[i, g, t]) -
-                        es_eta * (Y_ESL[i, g, t] + Y_ESGrid[i, g, t]) / es_effi 
-                        for g in g_index for t in t_index[:-1]),
+                        es_eta * (Y_ESL[i, g, t] + Y_ESGrid[i, g, t]) / es_effi,
                         name='Balance')
-                    sub.addConstrs(
-                        (Y_GridL[i, g, t] + Y_GridES[i, g, t] +
-                        Y_PVGrid[i, g, t] + Y_ESGrid[i, g, t] + Y_DGGrid[i, g, t] == 0
-                        for g in g_index for t in Outage[g]),
+                    sub.addConstr(Y_GridL[i, g, t] + Y_GridES[i, g, t] +
+                        Y_PVGrid[i, g, t] + Y_ESGrid[i, g, t] + Y_DGGrid[i, g, t] == 0,
                         name='GridTransaction')
-                    sub.addConstrs(
-                        (Y_I[i, g, t] == sum(Y_LT[i, g, t, to] for to in range(t + 1, T)) 
-                        for g in g_index for t in t_index[:-1]),
+                    sub.addConstr(Y_I[i, g, t] == trans_from_t,
                         name='Incentive')
         ###### Costs
         Costs = [0, 0]
