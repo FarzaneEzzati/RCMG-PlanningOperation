@@ -166,56 +166,60 @@ def build_models(mg_id):
         ###### Operation Constraints
         after_degradation = (1 - degrad_rate) ** n
 
-        sub_constrs = {}
+        sub_constrs = []
         for i in range(I):
             available_es = sum((i * after_degradation * X_I[l, 0] + i * X_E[l, 0] for l in l_index))
+            start = time()
             for g in g_index:
-                sub_constrs[f'es_t0[{i},{g},0]'] = Y_E[i, g, 0] == es_soc_ub * available_es
+                sub_constrs.append(Y_E[i, g, 0] == es_soc_ub * available_es)
                 print(g)
-                #sub.addConstr(sum(Y_LT[i, g, t, t] for t in t_index) == 0, name = 'NoTransToSelf')
-                start = time()
+                sub_constrs.append(sum(Y_LT[i, g, t, t] for t in t_index) == 0)
                 for t in t_index:
                     trans_to_t = sum(Y_LT[i, g, to, t] for to in range(t))
                     trans_from_t = sum(Y_LT[i, g, t, to] for to in range(t+1, T))
-                    sub_constrs[f'es_dis[{i},{g},{t}]'] = Y_ESL[i, g, t] + Y_ESGrid[i, g, t] <= (es_soc_ub - es_soc_lb) * available_es
-                    sub_constrs[f'es_lb[{i},{g},{t}]'] = Y_E[i, g, t] + trans_to_t >= es_soc_lb * available_es
-                    sub_constrs[f'es_ub[{i},{g},{t}]'] = Y_E[i, g, t] + trans_to_t <= es_soc_ub * available_es
+                    sub_constrs.append(Y_E[i, g, t] + trans_to_t >= es_soc_lb * available_es)
+                    sub_constrs.append(Y_E[i, g, t] + trans_to_t <= es_soc_ub * available_es)
+                    sub_constrs.append(Y_PVES[i, g, t] + Y_DGES[i, g, t] + Y_GridES[i, g, t] <= 
+                                       (es_soc_ub - es_soc_lb) * available_es)
                     a = time()
-                    sub_constrs[f'es_cha[{i},{g},{t}]'] = Y_PVES[i, g, t] + Y_DGES[i, g, t] + Y_GridES[i, g, t] <= (es_soc_ub - es_soc_lb) * available_es
-                    sub_constrs[f'PV[{i},{g},{t}]'] = Y_PVL[i, g, t] + Y_PVGrid[i, g, t] + \
+                    sub_constrs.append(Y_PVL[i, g, t] + Y_PVGrid[i, g, t] + \
                                                       Y_PVCur[i, g, t] + Y_PVES[i, g, t] <= \
-                                                      PV * sum(X_I[l, 1] + i * X_E[l, 1] for l in l_index)
-                    sub_constrs[f'DG[{i},{g},{t}]'] = Y_DGL[i, g, t] + Y_DGGrid[i, g, t] + \
+                                                      PV * sum(X_I[l, 1] + i * X_E[l, 1] for l in l_index))
+                    print(time()-a)
+                    a = time()
+                    sub_constrs.append(Y_DGL[i, g, t] + Y_DGGrid[i, g, t] + \
                                                       Y_DGES[i, g, t] + Y_DGCur[i, g, t] <= \
-                                                      dg_effi * sum(X_I[l, 2] + i * X_E[l, 2] for l in l_index)
-                    sub_constrs[f'Load[{i},{g},{t}]'] = Y_ESL[i, g, t] + Y_DGL[i, g, t] + \
+                                                      dg_effi * sum(X_I[l, 2] + i * X_E[l, 2] for l in l_index))
+                    print(time()-a)
+                    sub_constrs.append(Y_ESL[i, g, t] + Y_DGL[i, g, t] + \
                                                         Y_PVL[i, g, t] + Y_GridL[i, g, t] + \
                                                         Y_LSh[i, g, t] + trans_to_t - trans_from_t == \
-                                                        Load[i, g, t]
+                                                        Load[i, g, t])
                     # Outage and Trans times
                     if t not in Outage[g]:
-                        sub_constrs[f'no_out_no_shed[{i},{g},{t}]'] = Y_LSh[i, g, t] == 0
-                        sub_constrs[f'no_out_no_transto[{i},{g},{t}]'] = trans_to_t == 0
+                        sub_constrs.append(Y_LSh[i, g, t] == 0)
+                        sub_constrs.append(trans_to_t == 0)
                     else:
-                        sub_constrs[f'grid_trade[{i},{g},{t}]'] = Y_GridL[i, g, t] + Y_GridES[i, g, t] + \
-                                                                  Y_PVGrid[i, g, t] + Y_ESGrid[i, g, t] + \
-                                                                  Y_DGGrid[i, g, t] == 0
-                        sub_constrs[f'trans-max[{i},{g},{t}]'] = trans_from_t <= drp * Load[i, g, t]
+                        sub_constrs.append(Y_GridL[i, g, t] + Y_GridES[i, g, t] + \
+                                           Y_PVGrid[i, g, t] + Y_ESGrid[i, g, t] + \
+                                           Y_DGGrid[i, g, t] == 0)
+                        sub_constrs.append(trans_from_t <= drp * Load[i, g, t])
                     if t in no_trans[g]:
-                        sub_constrs[f'trans_off[{i},{g},{t}]'] = trans_from_t == 0
+                        sub_constrs.append(trans_from_t == 0)
                     else:
-                        sub_constrs[f'trans_if_es[{i},{g},{t}]'] = trans_from_t <= Y_E[i, g, t] - \
-                                                                   es_soc_lb * available_es
+                        sub_constrs.append(trans_from_t <= Y_E[i, g, t] - \
+                                                                   es_soc_lb * available_es)
                     # Balance
                     if t < T-1:
-                        sub_constrs[f'balance[{i},{g},{t}]'] = Y_E[i, g, t + 1] == \
-                                                               Y_E[i, g, t] - trans_from_t + \
-                                                               es_effi * (Y_PVES[i, g, t] + Y_DGES[i, g, t] +
-                                                                          es_eta * Y_GridES[i, g, t]) -\
-                                                               es_eta * (Y_ESL[i, g, t] + Y_ESGrid[i, g, t]) / es_effi
-                    sub_constrs[f'incentive[{i},{g},{t}]'] = Y_I[i, g, t] == trans_from_t
+                        sub_constrs.append(Y_E[i, g, t + 1] == \
+                                            Y_E[i, g, t] - trans_from_t + \
+                                            es_effi * (Y_PVES[i, g, t] + Y_DGES[i, g, t] +
+                                                        es_eta * Y_GridES[i, g, t]) -\
+                                            es_eta * (Y_ESL[i, g, t] + Y_ESGrid[i, g, t]) / es_effi)
+                    sub_constrs.append(Y_I[i, g, t] == trans_from_t)
                     print(time() - start)
                     start =time()
+                    break
         sub.addConstrs((c for c in sub_constrs))
         ###### Costs
         Costs = [0, 0]
