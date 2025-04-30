@@ -37,6 +37,7 @@ def build_models(mg_id):
                 3: [], 4: [],
                 5: summer_peak, 6: summer_peak, 7: summer_peak, 8: summer_peak,
                 9: [], 10: [], 11: []}
+    trans_period = 6
     ###### General Data
     Budget_I = general_dict['Budget_I']
     Budget_E = general_dict['Budget_E']
@@ -141,7 +142,7 @@ def build_models(mg_id):
         Y_E = sub.addMVar((I, G, T), name=f'Y_E')
         Y_LSh = sub.addMVar((I, G, T), name=f'Y_LSh')
         Y_I = sub.addMVar((I, G, T), name='Y_I')
-        Y_LT = sub.addMVar((I, G, T, T), lb=0, name=f'Y_LT')
+        Y_LT = sub.addMVar((I, G, T, T), name=f'Y_LT')
         sub.update()
 
         ###### Prepare Load, Outage, and Load Growth
@@ -155,10 +156,12 @@ def build_models(mg_id):
                 else:
                     Outage[g] = range(outage_start, outage_start + outage_duration)
         ###### Expansion Constraints
-        capital_cost_E = gp.quicksum(X_E[l, d] * C[d] for l in l_index for d in d_index)
-        operation_cost_E = gp.quicksum(X_E[l, d] * O[d] for l in l_index for d in d_index)
-        sub.addConstr((1 - sv_subsidy_rate) * capital_cost_E <= Budget_E, name='Budget Limit')
-        sub.addConstr(sv_subsidy_rate * capital_cost_E <= 0.5 * total_subsidy, name='Total Subsidy')
+        capital_cost_E = gp.quicksum(X_E[:, d].sum() * C[d] for d in d_index)
+        operation_cost_E = gp.quicksum(X_E[:, d].sum() * O[d] for d in d_index)
+        sub.addConstr(
+            (1 - sv_subsidy_rate) * capital_cost_E <= Budget_E, name='Budget Limit')
+        sub.addConstr(
+            sv_subsidy_rate * capital_cost_E <= 0.5 * total_subsidy, name='Total Subsidy')
         ###### Capacity limit
         sub.addConstrs(
             (X_E[l, d] + X_I[l, d] <= device_ub[l, d] for l,d in np.ndindex(L, D)),
@@ -168,79 +171,97 @@ def build_models(mg_id):
 
         sub_constrs = []
         for i in range(I):
-            available_es = sum((i * after_degradation * X_I[l, 0] + i * X_E[l, 0] for l in l_index))
-            start = time()
+            available_es = i * after_degradation * X_I[:, 0].sum() + i * X_E[l, 0].sum()
+            available_pv = X_I[:, 1].sum() + i * X_E[:, 1].sum()
+            available_dg = (X_I[:, 2].sum() + i * X_E[:, 2].sum()) * dg_effi
             for g in g_index:
-                sub_constrs.append(Y_E[i, g, 0] == es_soc_ub * available_es)
-                print(g)
-                sub_constrs.append(sum(Y_LT[i, g, t, t] for t in t_index) == 0)
+                start = time()
+                a = time()
                 for t in t_index:
-                    trans_to_t = sum(Y_LT[i, g, to, t] for to in range(t))
-                    trans_from_t = sum(Y_LT[i, g, t, to] for to in range(t+1, T))
-                    sub_constrs.append(Y_E[i, g, t] + trans_to_t >= es_soc_lb * available_es)
-                    sub_constrs.append(Y_E[i, g, t] + trans_to_t <= es_soc_ub * available_es)
-                    sub_constrs.append(Y_PVES[i, g, t] + Y_DGES[i, g, t] + Y_GridES[i, g, t] <= 
-                                       (es_soc_ub - es_soc_lb) * available_es)
-                    a = time()
-                    sub_constrs.append(Y_PVL[i, g, t] + Y_PVGrid[i, g, t] + \
-                                                      Y_PVCur[i, g, t] + Y_PVES[i, g, t] <= \
-                                                      PV * sum(X_I[l, 1] + i * X_E[l, 1] for l in l_index))
-                    print(time()-a)
-                    a = time()
-                    sub_constrs.append(Y_DGL[i, g, t] + Y_DGGrid[i, g, t] + \
-                                                      Y_DGES[i, g, t] + Y_DGCur[i, g, t] <= \
-                                                      dg_effi * sum(X_I[l, 2] + i * X_E[l, 2] for l in l_index))
-                    print(time()-a)
-                    sub_constrs.append(Y_ESL[i, g, t] + Y_DGL[i, g, t] + \
-                                                        Y_PVL[i, g, t] + Y_GridL[i, g, t] + \
-                                                        Y_LSh[i, g, t] + trans_to_t - trans_from_t == \
-                                                        Load[i, g, t])
+                    if t in Outage[g]:
+                        trans_to_t = gp.quicksum(Y_LT[i, g, to, t] for to in range(max(0, t - trans_period), t))
+                    else:
+                        trans_to_t = 0
+                    trans_from_t = gp.quicksum(Y_LT[i, g, t, to] for to in range(t + 1, min(T, t + trans_period + 1)))
+                    pv_dg_grid_to_es = Y_PVES[i, g, t] + Y_DGES[i, g, t] + Y_GridES[i, g, t]
+                    es_to_grid_load = Y_ESL[i, g, t] + Y_ESGrid[i, g, t]
+                    es_level_plus_trans = Y_E[i, g, t] + trans_to_t
+
+                    sub_constrs.append(
+                        es_level_plus_trans >= es_soc_lb * available_es)
+                    sub_constrs.append(
+                        es_level_plus_trans <= es_soc_ub * available_es)
+                    sub_constrs.append(
+                        pv_dg_grid_to_es <= (es_soc_ub - es_soc_lb) * available_es)
+                    sub_constrs.append(
+                        es_to_grid_load <= (es_soc_ub - es_soc_lb) * available_es)
+
+                    pv_usage = Y_PVL[i, g, t] + Y_PVGrid[i, g, t] +\
+                               Y_PVCur[i, g, t] + Y_PVES[i, g, t]
+                    sub_constrs.append(pv_usage <= PV[g, t] * available_pv)
+
+                    dg_usage = Y_DGL[i, g, t] + Y_DGGrid[i, g, t] + \
+                               Y_DGES[i, g, t] +Y_DGCur[i, g, t]
+                    sub_constrs.append(dg_usage <= available_dg)
+
+                    means_of_load = Y_ESL[i, g, t] + Y_DGL[i, g, t] + \
+                                    Y_PVL[i, g, t] + Y_GridL[i, g, t] +  \
+                                    Y_LSh[i, g, t] + trans_to_t - trans_from_t
+                    sub_constrs.append(means_of_load == Load[i, g, t])
+
                     # Outage and Trans times
+                    sub_constrs.append(Y_LT[i, g, t, t] == 0)
+
                     if t not in Outage[g]:
                         sub_constrs.append(Y_LSh[i, g, t] == 0)
                         sub_constrs.append(trans_to_t == 0)
                     else:
-                        sub_constrs.append(Y_GridL[i, g, t] + Y_GridES[i, g, t] + \
-                                           Y_PVGrid[i, g, t] + Y_ESGrid[i, g, t] + \
-                                           Y_DGGrid[i, g, t] == 0)
+                        grid_trade = Y_GridL[i, g, t] + Y_GridES[i, g, t] + \
+                                     Y_PVGrid[i, g, t] + Y_ESGrid[i, g, t] + Y_DGGrid[i, g, t]
+                        sub_constrs.append(grid_trade == 0)
+
                         sub_constrs.append(trans_from_t <= drp * Load[i, g, t])
+
                     if t in no_trans[g]:
                         sub_constrs.append(trans_from_t == 0)
                     else:
-                        sub_constrs.append(trans_from_t <= Y_E[i, g, t] - \
-                                                                   es_soc_lb * available_es)
+                        allowed_to_trans = Y_E[i, g, t] - es_soc_lb * available_es
+                        sub_constrs.append(trans_from_t <= allowed_to_trans)
                     # Balance
                     if t < T-1:
-                        sub_constrs.append(Y_E[i, g, t + 1] == \
-                                            Y_E[i, g, t] - trans_from_t + \
-                                            es_effi * (Y_PVES[i, g, t] + Y_DGES[i, g, t] +
-                                                        es_eta * Y_GridES[i, g, t]) -\
-                                            es_eta * (Y_ESL[i, g, t] + Y_ESGrid[i, g, t]) / es_effi)
-                    sub_constrs.append(Y_I[i, g, t] == trans_from_t)
-                    print(time() - start)
-                    start =time()
-                    break
+                        sub_constrs.append(
+                            Y_E[i, g, t + 1] == Y_E[i, g, t] -
+                            trans_from_t +
+                            es_effi * pv_dg_grid_to_es -
+                            es_eta * es_to_grid_load / es_effi)
+                    sub_constrs.append(
+                        Y_I[i, g, t] == trans_from_t)
         sub.addConstrs((c for c in sub_constrs))
         ###### Costs
         Costs = [0, 0]
         for i in range(I):
-            C_LSh = e_sheding * sum(Y_LSh[i, g, t] for g in g_index for t in t_index)
-            C_Cur = e_cur_pv * sum(Y_PVCur[i, g, t] for g in g_index for t in t_index) + \
-                    e_cur_dg * sum(Y_DGCur[i, g, t] for g in g_index for t in t_index)
-            C_IE = e_grid_import * (sum(Y_GridES[i, g, t] + Y_GridL[i, g, t] for g in g_index for t in t_index)) - \
-                   e_grid_export * (sum(Y_ESGrid[i, g, t] + Y_PVGrid[i, g, t] + Y_DGGrid[i, g, t]
-                                                for g in g_index for t in t_index))
-            C_F = dg_fule_cost * (sum(Y_DGES[i, g, t] + Y_DGL[i, g, t] + Y_DGGrid[i, g, t]
-                                              for g in g_index for t in t_index))
-            C_R = - e_load * (sum(Y_ESL[i, g, t] + Y_PVL[i, g, t] + Y_DGL[i, g, t]
-                                          for g in g_index for t in t_index))
-            C_IN = - e_drp * sum(Y_I[i, g, t] for g in g_index for t in t_index)
-            Costs[i] = C_LSh + C_Cur + C_IE + C_F + C_R + C_IN
+            # Cache repeated sums
+            sum_LSh = Y_LSh[i].sum()
+            sum_PVCur = Y_PVCur[i].sum()
+            sum_DGCur = Y_DGCur[i].sum()
+            sum_GridImport = Y_GridES[i].sum() + Y_GridL[i].sum()
+            sum_GridExport = Y_ESGrid[i].sum() + Y_PVGrid[i].sum() + Y_DGGrid[i].sum()
+            sum_DG = Y_DGES[i].sum() + Y_DGL[i].sum() + Y_DGGrid[i].sum()
+            sum_Load = Y_ESL[i].sum() + Y_PVL[i].sum() + Y_DGL[i].sum()
+            sum_I = Y_I[i].sum()
 
+            # Final expression assembly
+            C_LSh = e_sheding * sum_LSh
+            C_Cur = e_cur_pv * sum_PVCur + e_cur_dg * sum_DGCur
+            C_IE = e_grid_import * sum_GridImport - e_grid_export * sum_GridExport
+            C_F = dg_fule_cost * sum_DG
+            C_R = -e_load * sum_Load
+            C_IN = -e_drp * sum_I
+
+            Costs[i] = C_LSh + C_Cur + C_IE + C_F + C_R + C_IN
         # Force scalars to be float
-        pr = float(Pr[scenario_index])
-        ty = float(to_year)
-        total_cost = pr * (capital_cost_E + operation_cost_E * (N - n) + ty * (n * Costs[0] + (N - n) * Costs[1]))
+        pr = Pr[scenario_index]
+        total_cost = pr * (capital_cost_E + operation_cost_E * (N - n) + to_year * (n * Costs[0] + (N - n) * Costs[1]))
         sub.setObjective(total_cost, sense=GRB.MINIMIZE)
 
         sub.update()
@@ -259,7 +280,6 @@ def build_models(mg_id):
         TMatrices.append(TMatrix)
         rVectors.append(rVector)
         Loads.append(Load)
-        break
     ############################## Memory Monitor
     mem = psutil.virtual_memory()
     print(psutil.virtual_memory())
