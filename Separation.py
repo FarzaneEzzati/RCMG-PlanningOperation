@@ -119,7 +119,7 @@ class Separation:
             self.linking_names.append(name)
 
             name = f'available_pv[{i}]'
-            sep.addConstr(self.PV[i] == i * self.X_E[:, 1].sum() + degraded * self.X_I[:, 1].sum(), name=name)
+            sep.addConstr(self.PV[i] == i * self.X_E[:, 1].sum() + self.X_I[:, 1].sum(), name=name)
             self.linking_names.append(name)
 
             name =f'available_dg[{i}]'
