@@ -1,14 +1,8 @@
 import pickle
 import numpy as np
 import pandas as pd
-import time
 import gurobipy as gp
 from gurobipy import quicksum, GRB
-import warnings
-from tqdm import tqdm
-import gc  # garbage collecter
-import psutil  # to monitor memory
-from time import time
 from Methods import *
 from Data import ModelsData
 
@@ -44,16 +38,4 @@ class Master:
         master.setObjective(self.total_cost, sense=GRB.MINIMIZE)
         ##### Save master in mps + save data in pickle
         master.update()
-        master.write('Models/Master.mps')
         self.model = master
-
-
-def save_solutions(master:Master):
-    costs_to_save = {
-        'capital': master.capital_cost,
-        'operation': master.operation_cost,
-        'eta': master.eta
-    }
-    # Save to a pickle file
-    with open(f'Results/Master-mg {mg_id}.pkl', 'wb') as file:
-        pickle.dump(vars_to_save, costs_to_save, file)

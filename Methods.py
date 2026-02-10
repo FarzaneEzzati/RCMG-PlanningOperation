@@ -1,13 +1,5 @@
-import pickle
 import gurobipy as gp
-from gurobipy import Model
-import pandas as pd
 import numpy as np
-from tqdm import tqdm
-import copy
-from typing import Dict
-from itertools import product
-
 
 def GetPIs(optimal_x, seps, probs, TMatrices, rVectors):
     duals_e = []
@@ -37,7 +29,6 @@ def GetPIs(optimal_x, seps, probs, TMatrices, rVectors):
     # E (vector of size x)
     E = [T.T.dot(d) for T, d in zip(TMatrices, duals_T)]
     return E, e
-
 
 
 def Cuts(model, where, seps, probs, TMatrices, rVectors, data):
@@ -95,7 +86,7 @@ def solve_with_BD_BandB(master, seps, TMatrices, rVectors, probs, data):
     master.model._vars = master.model.getVars()
     master.model.Params.LazyConstraints = 1
     master.model.Params.NumericFocus = 3
-    master.model.Params.LogFile = "Models/master_log.log"
+    master.model.Params.LogFile = "master_log.log"
     master.model.optimize(lambda model, where: Cuts(model, where, seps, probs, TMatrices, rVectors, data))
 
     ##### Get optimal x

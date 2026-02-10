@@ -1,14 +1,8 @@
 import pickle
 import numpy as np
 import pandas as pd
-import time
 import gurobipy as gp
 from gurobipy import quicksum, GRB
-import warnings
-from tqdm import tqdm
-import gc  # garbage collecter
-import psutil  # to monitor memory
-from time import time
 from Methods import *
 from Data import ModelsData
 
@@ -245,7 +239,7 @@ class Separation:
         sep.update()
         self.constrs = sep.getConstrs()
         self.model = sep
-        #sep.write(f'Models/sep {scenario_index}.lp')
+    
 
 
 def save_solutions(f: Separation, scenario, mg_id, name):
