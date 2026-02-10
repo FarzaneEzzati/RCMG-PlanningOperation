@@ -91,6 +91,10 @@ Sensitivity.ipynb for parameter studies
 ## Author
 
 Farzane Ezzati
+[Home Page](https://farzaneezzati.owlstown.net/), [Google Scholar](https://scholar.google.com/citations?user=bQXvMpcAAAAJ&hl=en&oi=ao), [LinkedIn](https://www.linkedin.com/in/farzaneezzati/)
+
 PhD Candidate and Research Assistant, 
+
 Industrial and Systems Engineering
+
 University of Houston
